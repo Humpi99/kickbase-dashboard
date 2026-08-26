@@ -28,7 +28,7 @@ class KickbaseAPI:
         Meldet sich bei Kickbase an.
         Gibt User-Daten und eine Liste der Ligen zurück.
         """
-        url = f"{self.base_url}/v4/user/login"
+        url = f"{self.base_url}/v4/user/token"
         data = {
             "email": email,
             "password": password,
