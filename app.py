@@ -1,7 +1,7 @@
 """
 Kickbase Liga-Dashboard.
 
-Fokus: Kaderwert, Einstandspreis und Gewinn je Manager.
+KPIs: Kaderwert, Start 11, Trading, Gewinne.
 """
 
 import pandas as pd
@@ -156,16 +156,8 @@ def get_player_name(player):
 
 
 # ---------------------------------------------------------
-# Feldnamen für Werte
+# Feldnamen
 # ---------------------------------------------------------
-
-TEAM_VALUE_KEYS = [
-    "teamValue",
-    "tv",
-    "squadValue",
-    "sv",
-    "tvl",
-]
 
 MARKET_VALUE_KEYS = [
     "marketValue",
@@ -192,12 +184,17 @@ PROFIT_KEYS = [
     "sp",
 ]
 
-
-def get_team_value(manager):
-    """Liest den Kaderwert eines Managers."""
-    return to_number(
-        first_value(manager, TEAM_VALUE_KEYS)
-    )
+# Felder, die auf einen Startelf-Platz hindeuten
+LINEUP_KEYS = [
+    "lineupPosition",
+    "lp",
+    "lo",
+    "lineup",
+    "inLineup",
+    "isLineup",
+    "lpo",
+    "lst",
+]
 
 
 def get_market_value(player):
@@ -208,51 +205,26 @@ def get_market_value(player):
 
 
 def get_raw_buy_price(player):
-    """
-    Liest den echten Kaufpreis aus der API.
-
-    Zugeloste Spieler haben hier oft keinen Wert.
-    """
+    """Liest den echten Kaufpreis aus der API."""
     return to_number(
         first_value(player, BUY_PRICE_KEYS)
     )
 
 
 def get_raw_profit(player):
-    """Liest einen bereits vorhandenen Gewinnwert."""
+    """Liest einen vorhandenen Gewinnwert."""
     return to_number(
         first_value(player, PROFIT_KEYS)
     )
 
 
-def get_player_profit(player):
-    """
-    Ermittelt den Gewinn eines Spielers.
-
-    1. Gewinn direkt aus der API
-    2. Sonst Marktwert minus Kaufpreis
-    """
-    direct_profit = get_raw_profit(player)
-
-    if direct_profit is not None:
-        return direct_profit
-
-    market_value = get_market_value(player)
-    buy_price = get_raw_buy_price(player)
-
-    if market_value is None or buy_price is None:
-        return None
-
-    return market_value - buy_price
-
-
 def get_buy_price(player):
     """
-    Ermittelt den Einstandspreis eines Spielers.
+    Ermittelt den Einstandspreis.
 
-    1. Kaufpreis direkt aus der API
-    2. Sonst Marktwert minus Gewinn
-       (wichtig für zugeloste Spieler)
+    1. Kaufpreis aus der API
+    2. Marktwert minus Gewinn
+    3. Sonst 0 (zugeloster Spieler)
     """
     raw_price = get_raw_buy_price(player)
 
@@ -262,10 +234,31 @@ def get_buy_price(player):
     market_value = get_market_value(player)
     profit = get_raw_profit(player)
 
-    if market_value is None or profit is None:
+    if market_value is not None and profit is not None:
+        return market_value - profit
+
+    # Zugeloste Spieler haben keinen Einstandspreis.
+    return 0.0
+
+
+def get_player_profit(player):
+    """
+    Ermittelt den Gewinn eines Spielers.
+
+    1. Gewinn aus der API
+    2. Marktwert minus Einstandspreis
+    """
+    direct_profit = get_raw_profit(player)
+
+    if direct_profit is not None:
+        return direct_profit
+
+    market_value = get_market_value(player)
+
+    if market_value is None:
         return None
 
-    return market_value - profit
+    return market_value - get_buy_price(player)
 
 
 def get_price_source(player):
@@ -276,7 +269,31 @@ def get_price_source(player):
     if get_raw_profit(player) is not None:
         return "Berechnet"
 
-    return "—"
+    return "Zulosung"
+
+
+def is_in_lineup(player):
+    """
+    Prüft, ob ein Spieler aufgestellt ist.
+
+    Gibt None zurück, wenn es kein Feld dazu gibt.
+    """
+    for key in LINEUP_KEYS:
+        if key not in player:
+            continue
+
+        value = player[key]
+
+        if isinstance(value, bool):
+            return value
+
+        number = to_number(value)
+
+        if number is not None:
+            # 0 bedeutet meist Bank
+            return number > 0
+
+    return None
 
 
 # ---------------------------------------------------------
@@ -319,8 +336,6 @@ def looks_like_manager(item):
         "ui",
         "teamValue",
         "tv",
-        "squadValue",
-        "sv",
         "points",
         "pt",
         "placement",
@@ -427,7 +442,7 @@ def find_managers(value):
 
 
 def find_players_with_value(value):
-    """Sucht Spieler, die einen Marktwert besitzen."""
+    """Sucht Spieler mit Marktwert."""
     return find_list(
         value,
         looks_like_player_with_value,
@@ -482,6 +497,135 @@ def safe_structure(value, depth=0):
         }
 
     return f"<{type(value).__name__}>"
+
+
+# ---------------------------------------------------------
+# Realisierter Gewinn aus dem Feed
+# ---------------------------------------------------------
+
+def load_realized_profit(api, league_id, manager_id):
+    """
+    Berechnet den realisierten Gewinn aus dem Liga-Feed.
+
+    Sammelt Käufe und Verkäufe eines Managers.
+    """
+    all_items = []
+
+    for start in range(0, 200, 25):
+        try:
+            sources, _ = api.get_league_feed(
+                league_id,
+                start,
+            )
+        except Exception:
+            break
+
+        page_items = []
+
+        for source in sources:
+            data = source["data"]
+
+            if isinstance(data, dict):
+                items = (
+                    data.get("af")
+                    or data.get("items")
+                    or data.get("it")
+                    or []
+                )
+
+                if isinstance(items, list):
+                    page_items.extend(items)
+
+        if not page_items:
+            break
+
+        all_items.extend(page_items)
+
+    # Käufe und Verkäufe je Spieler sammeln
+    purchases = {}
+    sales = {}
+
+    for item in all_items:
+        if not isinstance(item, dict):
+            continue
+
+        meta = first_value(item, ["meta", "m", "data"], {})
+
+        if not isinstance(meta, dict):
+            meta = {}
+
+        # Manager-ID prüfen
+        item_manager = first_value(
+            meta,
+            ["byr", "slr", "uid", "ui", "userId"],
+        )
+
+        if item_manager is None:
+            item_manager = first_value(
+                item,
+                ["byr", "slr", "uid", "ui", "userId"],
+            )
+
+        buyer = first_value(meta, ["byr", "buyerId"])
+        seller = first_value(meta, ["slr", "sellerId"])
+
+        player_id = first_value(
+            meta,
+            ["pi", "playerId", "pid"],
+        )
+
+        amount = to_number(
+            first_value(
+                meta,
+                ["trp", "price", "pr", "v", "value"],
+            )
+        )
+
+        if amount is None or player_id is None:
+            continue
+
+        if str(buyer) == str(manager_id):
+            purchases.setdefault(
+                str(player_id), []
+            ).append(amount)
+
+        if str(seller) == str(manager_id):
+            sales.setdefault(
+                str(player_id), []
+            ).append(amount)
+
+    # Gewinn nur für Spieler, die gekauft UND verkauft wurden
+    realized = 0.0
+    trades = []
+
+    for player_id, sale_prices in sales.items():
+        buy_prices = purchases.get(player_id, [])
+
+        for index, sale_price in enumerate(sale_prices):
+            if index < len(buy_prices):
+                buy_price = buy_prices[index]
+            else:
+                buy_price = 0.0
+
+            profit = sale_price - buy_price
+            realized += profit
+
+            trades.append(
+                {
+                    "Spieler-ID": player_id,
+                    "Kaufpreis": format_currency(
+                        buy_price
+                    ),
+                    "Verkaufspreis": format_currency(
+                        sale_price
+                    ),
+                    "Gewinn": format_signed_currency(
+                        profit
+                    ),
+                }
+            )
+
+    return realized, trades, len(all_items)
 
 
 # ---------------------------------------------------------
@@ -580,11 +724,17 @@ selected_league = leagues[league_index]
 league_id = get_league_id(selected_league)
 league_name = get_league_name(selected_league)
 
+show_realized = st.sidebar.checkbox(
+    "Realisierten Gewinn laden",
+    value=True,
+    help="Lädt den Liga-Feed. Dauert etwas länger.",
+)
+
 st.title(f"⚽ {league_name}")
 
 
 # ---------------------------------------------------------
-# Ranking laden
+# Manager laden
 # ---------------------------------------------------------
 
 managers = []
@@ -612,43 +762,8 @@ if not managers:
 
 
 # ---------------------------------------------------------
-# Ranking-Tabelle
-# ---------------------------------------------------------
-
-st.subheader("🏆 Kaderwerte der Liga")
-
-ranking_rows = []
-
-for manager in managers:
-    team_value = get_team_value(manager)
-
-    ranking_rows.append(
-        {
-            "Manager": get_manager_name(manager),
-            "Kaderwert": format_currency(team_value),
-            "_sort": team_value or 0,
-        }
-    )
-
-ranking_frame = pd.DataFrame(ranking_rows)
-ranking_frame = ranking_frame.sort_values(
-    "_sort",
-    ascending=False,
-)
-ranking_frame = ranking_frame.drop(columns=["_sort"])
-
-st.dataframe(
-    ranking_frame,
-    use_container_width=True,
-    hide_index=True,
-)
-
-
-# ---------------------------------------------------------
 # Manager auswählen
 # ---------------------------------------------------------
-
-st.markdown("---")
 
 manager_index = st.selectbox(
     "👤 Manager auswählen",
@@ -666,7 +781,7 @@ selected_manager_name = get_manager_name(
 
 
 # ---------------------------------------------------------
-# Kader des gewählten Managers laden
+# Kader laden
 # ---------------------------------------------------------
 
 players = []
@@ -690,78 +805,124 @@ except Exception as error:
 
 
 # ---------------------------------------------------------
-# Kennzahlen
+# Kennzahlen berechnen
+# ---------------------------------------------------------
+
+squad_value = 0.0
+lineup_value = 0.0
+trading_value = 0.0
+profit_in_club = 0.0
+
+lineup_count = 0
+trading_count = 0
+lineup_detected = False
+
+for player in players:
+    market_value = get_market_value(player) or 0.0
+    profit = get_player_profit(player) or 0.0
+
+    squad_value += market_value
+    profit_in_club += profit
+
+    in_lineup = is_in_lineup(player)
+
+    if in_lineup is None:
+        continue
+
+    lineup_detected = True
+
+    if in_lineup:
+        lineup_value += market_value
+        lineup_count += 1
+    else:
+        trading_value += market_value
+        trading_count += 1
+
+
+# ---------------------------------------------------------
+# Realisierter Gewinn
+# ---------------------------------------------------------
+
+realized_profit = None
+realized_trades = []
+feed_count = 0
+
+if show_realized and players:
+    with st.spinner(
+        "Realisierter Gewinn wird berechnet …"
+    ):
+        (
+            realized_profit,
+            realized_trades,
+            feed_count,
+        ) = load_realized_profit(
+            api,
+            league_id,
+            selected_manager_id,
+        )
+
+
+# ---------------------------------------------------------
+# KPI-Anzeige
 # ---------------------------------------------------------
 
 st.subheader(
-    f"📊 Übersicht: {selected_manager_name}"
+    f"📊 Kennzahlen: {selected_manager_name}"
 )
 
-team_value = get_team_value(selected_manager)
+row1_col1, row1_col2, row1_col3 = st.columns(3)
 
-calculated_value = None
-total_profit = None
-total_buy = None
-profit_count = 0
-
-if players:
-    market_values = []
-    profits = []
-    buy_prices = []
-
-    for player in players:
-        market_value = get_market_value(player)
-
-        if market_value is not None:
-            market_values.append(market_value)
-
-        profit = get_player_profit(player)
-
-        if profit is not None:
-            profits.append(profit)
-            profit_count += 1
-
-        buy_price = get_buy_price(player)
-
-        if buy_price is not None:
-            buy_prices.append(buy_price)
-
-    if market_values:
-        calculated_value = sum(market_values)
-
-    if profits:
-        total_profit = sum(profits)
-
-    if buy_prices:
-        total_buy = sum(buy_prices)
-
-col1, col2, col3, col4 = st.columns(4)
-
-col1.metric(
+row1_col1.metric(
     "Kaderwert",
-    format_currency(team_value),
+    format_currency(squad_value),
+    help=f"{len(players)} Spieler",
 )
 
-col2.metric(
-    "Summe Marktwerte",
-    format_currency(calculated_value),
+row1_col2.metric(
+    "Start 11",
+    format_currency(lineup_value)
+    if lineup_detected
+    else "—",
+    help=f"{lineup_count} Spieler aufgestellt",
 )
 
-col3.metric(
-    "Summe Einstandspreise",
-    format_currency(total_buy),
+row1_col3.metric(
+    "Trading Spieler",
+    format_currency(trading_value)
+    if lineup_detected
+    else "—",
+    help=f"{trading_count} Spieler nicht aufgestellt",
 )
 
-col4.metric(
+row2_col1, row2_col2, row2_col3 = st.columns(3)
+
+row2_col1.metric(
+    "Gewinn im Verein",
+    format_signed_currency(profit_in_club),
+)
+
+row2_col2.metric(
+    "Gewinn realisiert",
+    format_signed_currency(realized_profit)
+    if realized_profit is not None
+    else "—",
+)
+
+total_profit = profit_in_club
+
+if realized_profit is not None:
+    total_profit = profit_in_club + realized_profit
+
+row2_col3.metric(
     "Gewinn gesamt",
     format_signed_currency(total_profit),
 )
 
-st.caption(
-    f"Manager-ID: {selected_manager_id} · "
-    f"Spieler geladen: {len(players)} · "
-    f"Gewinn ermittelt für {profit_count} Spieler"
-)
+if not lineup_detected and players:
+    st.info(
+        "Die Aufstellung konnte nicht erkannt werden. "
+        "Start 11 und Trading bleiben leer."
+    )
 
 
 # ---------------------------------------------------------
@@ -802,20 +963,28 @@ elif players:
         except (TypeError, ValueError):
             position_name = "Unbekannt"
 
-        market_value = get_market_value(player)
-        buy_price = get_buy_price(player)
+        in_lineup = is_in_lineup(player)
+
+        if in_lineup is True:
+            status = "Start 11"
+        elif in_lineup is False:
+            status = "Trading"
+        else:
+            status = "—"
+
         profit = get_player_profit(player)
 
         player_rows.append(
             {
                 "Spieler": get_player_name(player),
                 "Position": position_name,
+                "Status": status,
                 "Einstandspreis": format_currency(
-                    buy_price
+                    get_buy_price(player)
                 ),
                 "Quelle": get_price_source(player),
                 "Marktwert": format_currency(
-                    market_value
+                    get_market_value(player)
                 ),
                 "Gewinn": format_signed_currency(
                     profit
@@ -841,29 +1010,35 @@ elif players:
         hide_index=True,
     )
 
-    if profit_count == 0:
-        st.warning(
-            "Marktwerte sind da, aber weder Kaufpreis "
-            "noch Gewinn wurden gefunden. Unten stehen "
-            "die echten Feldnamen."
-        )
-
-        with st.expander(
-            "Alle Felder eines Spielers"
-        ):
-            st.write(sorted(players[0].keys()))
-            st.json(players[0])
-
 else:
     st.info(
         "Für diesen Manager wurden keine Spieler "
-        "mit Marktwert gefunden."
+        "gefunden."
     )
 
-    if squad_result is not None:
-        with st.expander(
-            "Sichere Struktur anzeigen"
-        ):
-            st.json(
-                safe_structure(squad_result)
-            )
+
+# ---------------------------------------------------------
+# Diagnose
+# ---------------------------------------------------------
+
+st.markdown("---")
+
+with st.expander("🔎 Diagnose"):
+    st.write(
+        f"Feed-Einträge geladen: {feed_count}"
+    )
+
+    if realized_trades:
+        st.write("**Abgeschlossene Trades:**")
+        st.dataframe(
+            pd.DataFrame(realized_trades),
+            use_container_width=True,
+            hide_index=True,
+        )
+    else:
+        st.write("Keine Trades erkannt.")
+
+    if players:
+        st.write("**Felder eines Spielers:**")
+        st.write(sorted(players[0].keys()))
+        st.json(players[0])
