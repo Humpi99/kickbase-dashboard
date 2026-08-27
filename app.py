@@ -2,6 +2,7 @@
 Kickbase Liga-Dashboard.
 
 Ansichten: Manager und Liga.
+Optimiert fuer Desktop und Handy.
 """
 
 import pandas as pd
@@ -80,16 +81,20 @@ def format_signed_currency(value):
     return f"-{format_currency(abs(number))}"
 
 
-def table_height(row_count):
+def table_height(row_count, compact=False):
     """
     Berechnet die volle Tabellenhöhe.
 
     So entsteht kein zusätzliches Scrollfenster.
     """
-    return int(38 + row_count * 35)
+    row_height = 30 if compact else 35
+    header = 34 if compact else 38
+
+    return int(header + row_count * row_height)
 
 
-def sort_controls(frame, columns, key, default_column):
+def sort_controls(frame, columns, key, default_column,
+                  compact=False):
     """
     Zeigt deutsche Sortierfelder über einer Tabelle.
 
@@ -103,12 +108,16 @@ def sort_controls(frame, columns, key, default_column):
     if not available:
         return frame.reset_index(drop=True)
 
-    left, right = st.columns([3, 2])
-
     if default_column in available:
         default_index = available.index(default_column)
     else:
         default_index = 0
+
+    if compact:
+        left = st.container()
+        right = st.container()
+    else:
+        left, right = st.columns([3, 2])
 
     sort_column = left.selectbox(
         "Sortieren nach",
@@ -226,6 +235,19 @@ def get_player_name(player):
         return str(single_name)
 
     return "Unbekannt"
+
+
+def get_short_player_name(player):
+    """Gibt einen kurzen Namen für die Handyansicht."""
+    last_name = first_value(
+        player,
+        ["lastName", "ln", "pln"],
+    )
+
+    if last_name:
+        return str(last_name)
+
+    return get_player_name(player)
 
 
 # ---------------------------------------------------------
@@ -841,7 +863,7 @@ def style_player_table(frame):
 
     def color_row(row):
         """Graut Zeilen von Trading Spielern aus."""
-        if row["Status"] == "Trading":
+        if row.get("Status") == "Trading":
             return [
                 "color: #9a9a9a; "
                 "background-color: #f7f7f7"
@@ -849,23 +871,35 @@ def style_player_table(frame):
 
         return [""] * len(row)
 
-    styled = frame.style.apply(color_row, axis=1)
+    styled = frame.style
 
-    styled = styled.map(
-        color_by_value,
-        subset=["Gewinn gesamt", "Trend 24 Stunden"],
-    )
+    if "Status" in frame.columns:
+        styled = styled.apply(color_row, axis=1)
 
-    styled = styled.format(
-        {
-            "Einstandspreis": currency_formatter,
-            "Marktwert": currency_formatter,
-            "Gewinn gesamt": signed_formatter,
-            "Trend 24 Stunden": signed_formatter,
-        }
-    )
+    signed_columns = [
+        column for column in [
+            "Gewinn gesamt",
+            "Trend 24 Stunden",
+        ]
+        if column in frame.columns
+    ]
 
-    return styled
+    if signed_columns:
+        styled = styled.map(
+            color_by_value,
+            subset=signed_columns,
+        )
+
+    formats = {}
+
+    for column in ["Einstandspreis", "Marktwert"]:
+        if column in frame.columns:
+            formats[column] = currency_formatter
+
+    for column in signed_columns:
+        formats[column] = signed_formatter
+
+    return styled.format(formats)
 
 
 def style_league_table(frame):
@@ -889,10 +923,13 @@ def style_league_table(frame):
         if column in frame.columns
     ]
 
-    styled = frame.style.map(
-        color_by_value,
-        subset=signed_columns,
-    )
+    styled = frame.style
+
+    if signed_columns:
+        styled = styled.map(
+            color_by_value,
+            subset=signed_columns,
+        )
 
     formats = {}
 
@@ -929,12 +966,13 @@ def style_trades_table(frame):
 # KPI-Blöcke
 # ---------------------------------------------------------
 
-def kpi_block(title, entries):
+def kpi_block(title, entries, compact=False):
     """
     Zeigt einen KPI-Block mit Überschrift und Spalten.
 
     entries ist eine Liste aus Einträgen:
     (Beschriftung, Hauptwert, Zusatzzeilen, Farbe)
+    Bei compact entfallen die Zusatzzeilen.
     """
     colors = {
         "neutral": COLOR_NEUTRAL,
@@ -942,9 +980,12 @@ def kpi_block(title, entries):
         "minus": COLOR_NEGATIVE,
     }
 
+    value_size = 19 if compact else 24
+
     st.markdown(
-        f"<div style='border-top:1px solid {COLOR_LINE};"
-        f"padding-top:10px;margin-top:22px;"
+        f"<div class='kpi-title' style='"
+        f"border-top:1px solid {COLOR_LINE};"
+        f"padding-top:10px;margin-top:18px;"
         f"font-size:12px;font-weight:500;"
         f"letter-spacing:0.08em;text-transform:uppercase;"
         f"color:{COLOR_LABEL};'>{title}</div>",
@@ -960,21 +1001,24 @@ def kpi_block(title, entries):
 
         notes_html = ""
 
-        for note in notes:
-            if note:
-                notes_html += (
-                    f"<div style='font-size:12px;"
-                    f"color:{COLOR_LABEL};"
-                    f"line-height:1.5;'>{note}</div>"
-                )
+        if not compact:
+            for note in notes:
+                if note:
+                    notes_html += (
+                        f"<div style='font-size:12px;"
+                        f"color:{COLOR_LABEL};"
+                        f"line-height:1.5;'>{note}</div>"
+                    )
 
         column.markdown(
-            f"<div style='padding:8px 0 2px 0;'>"
+            f"<div class='kpi-card' "
+            f"style='padding:6px 0 2px 0;'>"
             f"<div style='font-size:12px;"
             f"color:{COLOR_LABEL};'>{label}</div>"
-            f"<div style='font-size:24px;font-weight:700;"
-            f"color:{color};padding:2px 0 4px 0;'>"
-            f"{value}</div>"
+            f"<div class='kpi-value' "
+            f"style='font-size:{value_size}px;"
+            f"font-weight:700;color:{color};"
+            f"padding:2px 0 4px 0;'>{value}</div>"
             f"{notes_html}"
             f"</div>",
             unsafe_allow_html=True,
@@ -1030,13 +1074,15 @@ st.set_page_config(
     page_title="Kickbase Dashboard",
     page_icon="⚽",
     layout="wide",
+    initial_sidebar_state="collapsed",
 )
 
 
-# Gestaltung der Reiter in der Seitenleiste
+# Gestaltung der Reiter und der Handyansicht
 st.markdown(
     """
     <style>
+    /* Reiter in der Seitenleiste */
     section[data-testid="stSidebar"] div.stButton > button {
         width: 100%;
         text-align: left;
@@ -1065,6 +1111,45 @@ st.markdown(
         background-color: #000000;
         border-color: #000000;
         color: #ffffff;
+    }
+
+    /* Handyansicht: schmale Bildschirme */
+    @media (max-width: 640px) {
+        .block-container {
+            padding-left: 0.8rem !important;
+            padding-right: 0.8rem !important;
+            padding-top: 2.5rem !important;
+        }
+        h1 {
+            font-size: 1.35rem !important;
+        }
+        h2, h3 {
+            font-size: 1.05rem !important;
+        }
+        .kpi-value {
+            font-size: 18px !important;
+        }
+        .kpi-title {
+            margin-top: 14px !important;
+        }
+        /* KPI-Spalten untereinander stapeln */
+        div[data-testid="stHorizontalBlock"] {
+            flex-direction: column !important;
+            gap: 0.2rem !important;
+        }
+        div[data-testid="stHorizontalBlock"]
+        > div[data-testid="column"] {
+            width: 100% !important;
+            flex: 1 1 100% !important;
+            min-width: 100% !important;
+        }
+        /* Tabellen kompakter */
+        div[data-testid="stDataFrame"] {
+            font-size: 12px !important;
+        }
+        .stCaption, div[data-testid="stCaptionContainer"] {
+            font-size: 11px !important;
+        }
     }
     </style>
     """,
@@ -1123,6 +1208,19 @@ if not st.session_state.get("logged_in"):
     st.title("⚽ Kickbase Liga-Dashboard")
     st.info("Bitte links anmelden.")
     st.stop()
+
+
+# ---------------------------------------------------------
+# Handy-Ansicht
+# ---------------------------------------------------------
+
+compact = st.sidebar.toggle(
+    "📱 Handy-Ansicht",
+    value=False,
+    help="Zeigt weniger Spalten und weniger Zusatztexte.",
+)
+
+st.sidebar.markdown("---")
 
 
 # ---------------------------------------------------------
@@ -1190,7 +1288,7 @@ league_name = get_league_name(selected_league)
 
 show_realized = st.sidebar.checkbox(
     "Realisierten Gewinn laden",
-    value=True,
+    value=not compact,
     help="Liest die Transferhistorie. Dauert länger.",
 )
 
@@ -1206,7 +1304,14 @@ if st.sidebar.button("Abmelden", key="logout"):
     st.session_state.clear()
     st.rerun()
 
-st.title(f"⚽ {league_name}")
+if compact:
+    st.markdown(
+        f"<div style='font-size:15px;font-weight:600;"
+        f"padding-bottom:6px;'>⚽ {league_name}</div>",
+        unsafe_allow_html=True,
+    )
+else:
+    st.title(f"⚽ {league_name}")
 
 
 # ---------------------------------------------------------
@@ -1241,7 +1346,7 @@ if not managers:
 # ---------------------------------------------------------
 
 if view == "Liga":
-    st.subheader("Liga-Vergleich aller Manager")
+    st.subheader("Liga-Vergleich")
 
     st.caption(
         "Ein Klick auf eine Zeile öffnet die "
@@ -1324,9 +1429,15 @@ if view == "Liga":
             columns=["_sort"]
         )
 
-    league_frame = sort_controls(
-        league_frame,
-        [
+    if compact:
+        visible_columns = [
+            "Manager",
+            "Kaderwert",
+            "Gewinn gesamt",
+            "Trend gesamt",
+        ]
+    else:
+        visible_columns = [
             "Manager",
             "Start 11",
             "Trading",
@@ -1336,9 +1447,21 @@ if view == "Liga":
             "Trend Start 11",
             "Trend Trading",
             "Trend gesamt",
-        ],
+        ]
+
+    league_frame = league_frame[
+        [
+            column for column in visible_columns
+            if column in league_frame.columns
+        ]
+    ]
+
+    league_frame = sort_controls(
+        league_frame,
+        visible_columns,
         key="liga",
         default_column="Kaderwert",
+        compact=compact,
     )
 
     sorted_names = league_frame["Manager"].tolist()
@@ -1347,7 +1470,7 @@ if view == "Liga":
         style_league_table(league_frame),
         use_container_width=True,
         hide_index=True,
-        height=table_height(len(league_frame)),
+        height=table_height(len(league_frame), compact),
         on_select="rerun",
         selection_mode="single-row",
         key="league_table",
@@ -1530,6 +1653,7 @@ with st.expander(
                 "neutral",
             ),
         ],
+        compact=compact,
     )
 
     kpi_block(
@@ -1558,6 +1682,7 @@ with st.expander(
                 tone_of(total_profit),
             ),
         ],
+        compact=compact,
     )
 
     kpi_block(
@@ -1588,11 +1713,13 @@ with st.expander(
                 tone_of(stats["trend_total"]),
             ),
         ],
+        compact=compact,
     )
 
     kpi_block(
         "Weitere KPIs",
         build_extra_kpis(),
+        compact=compact,
     )
 
     st.markdown("")
@@ -1602,9 +1729,10 @@ with st.expander(
 # Kadertabelle, immer vollständig sichtbar
 # ---------------------------------------------------------
 
-st.subheader(
-    f"Kader von {selected_manager_name}"
-)
+if compact:
+    st.subheader("Kader")
+else:
+    st.subheader(f"Kader von {selected_manager_name}")
 
 if squad_error:
     st.error(
@@ -1642,9 +1770,15 @@ elif players:
             else "Trading"
         )
 
+        name = (
+            get_short_player_name(player)
+            if compact
+            else get_player_name(player)
+        )
+
         player_rows.append(
             {
-                "Spieler": get_player_name(player),
+                "Spieler": name,
                 "Position": position_name,
                 "Status": status,
                 "Einstandspreis": get_buy_price(player),
@@ -1658,9 +1792,16 @@ elif players:
 
     player_frame = pd.DataFrame(player_rows)
 
-    player_frame = sort_controls(
-        player_frame,
-        [
+    if compact:
+        visible_columns = [
+            "Spieler",
+            "Status",
+            "Marktwert",
+            "Gewinn gesamt",
+            "Trend 24 Stunden",
+        ]
+    else:
+        visible_columns = [
             "Spieler",
             "Position",
             "Status",
@@ -1668,21 +1809,26 @@ elif players:
             "Marktwert",
             "Gewinn gesamt",
             "Trend 24 Stunden",
-        ],
+        ]
+
+    player_frame = player_frame[visible_columns]
+
+    player_frame = sort_controls(
+        player_frame,
+        visible_columns,
         key="kader",
         default_column="Gewinn gesamt",
+        compact=compact,
     )
 
     st.dataframe(
         style_player_table(player_frame),
         use_container_width=True,
         hide_index=True,
-        height=table_height(len(player_frame)),
+        height=table_height(len(player_frame), compact),
     )
 
-    st.caption(
-        "Trading Spieler sind ausgegraut."
-    )
+    st.caption("Trading Spieler sind ausgegraut.")
 
 else:
     st.info("Keine Spieler gefunden.")
@@ -1707,13 +1853,14 @@ if realized_trades:
         ],
         key="verkaeufe",
         default_column="Gewinn",
+        compact=compact,
     )
 
     st.dataframe(
         style_trades_table(trades_frame),
         use_container_width=True,
         hide_index=True,
-        height=table_height(len(trades_frame)),
+        height=table_height(len(trades_frame), compact),
     )
 
 
@@ -1748,107 +1895,111 @@ with st.expander("Alle Daten zu einem Spieler"):
 
 
 # ---------------------------------------------------------
-# Alle Daten zu einem Manager
+# Diagnosebereiche, am Handy ausgeblendet
 # ---------------------------------------------------------
 
-with st.expander("Alle Daten zu diesem Manager"):
-    st.write(
-        "Hier werden alle bekannten Manager-Endpunkte "
-        "getestet und ihr Inhalt angezeigt."
-    )
+if not compact:
+    with st.expander("Alle Daten zu diesem Manager"):
+        st.write(
+            "Hier werden alle bekannten Manager-Endpunkte "
+            "getestet und ihr Inhalt angezeigt."
+        )
 
-    if st.button("Manager-Daten laden"):
-        with st.spinner("Endpunkte werden getestet …"):
-            manager_sources, manager_errors = (
-                api.explore_manager(
-                    league_id,
-                    selected_manager_id,
+        if st.button("Manager-Daten laden"):
+            with st.spinner(
+                "Endpunkte werden getestet …"
+            ):
+                manager_sources, manager_errors = (
+                    api.explore_manager(
+                        league_id,
+                        selected_manager_id,
+                    )
                 )
+
+            st.session_state["manager_sources"] = (
+                manager_sources
+            )
+            st.session_state["manager_errors"] = (
+                manager_errors
             )
 
-        st.session_state["manager_sources"] = (
-            manager_sources
-        )
-        st.session_state["manager_errors"] = (
-            manager_errors
+        manager_sources = st.session_state.get(
+            "manager_sources",
+            [],
         )
 
-    manager_sources = st.session_state.get(
-        "manager_sources",
-        [],
-    )
-
-    manager_errors = st.session_state.get(
-        "manager_errors",
-        [],
-    )
-
-    if manager_sources:
-        st.success(
-            f"{len(manager_sources)} Endpunkte haben "
-            "geantwortet."
+        manager_errors = st.session_state.get(
+            "manager_errors",
+            [],
         )
 
-        overview_rows = []
-
-        for source in manager_sources:
-            data = source["data"]
-
-            if isinstance(data, dict):
-                content = ", ".join(sorted(data.keys()))
-            elif isinstance(data, list):
-                content = (
-                    f"Liste mit {len(data)} Einträgen"
-                )
-            else:
-                content = str(type(data).__name__)
-
-            overview_rows.append(
-                {
-                    "Endpunkt": source["path"],
-                    "Enthaltene Felder": content,
-                }
+        if manager_sources:
+            st.success(
+                f"{len(manager_sources)} Endpunkte haben "
+                "geantwortet."
             )
 
-        overview_frame = pd.DataFrame(overview_rows)
+            overview_rows = []
 
-        st.dataframe(
-            overview_frame,
-            use_container_width=True,
-            hide_index=True,
-            height=table_height(len(overview_frame)),
-        )
+            for source in manager_sources:
+                data = source["data"]
 
-        st.write("**Inhalt der einzelnen Endpunkte:**")
+                if isinstance(data, dict):
+                    content = ", ".join(
+                        sorted(data.keys())
+                    )
+                elif isinstance(data, list):
+                    content = (
+                        f"Liste mit {len(data)} Einträgen"
+                    )
+                else:
+                    content = str(type(data).__name__)
 
-        for source in manager_sources:
-            with st.expander(source["path"]):
-                fields = flatten_fields(source["data"])
+                overview_rows.append(
+                    {
+                        "Endpunkt": source["path"],
+                        "Enthaltene Felder": content,
+                    }
+                )
 
-                if fields:
-                    st.dataframe(
-                        pd.DataFrame(fields),
-                        use_container_width=True,
-                        hide_index=True,
-                        height=350,
+            overview_frame = pd.DataFrame(overview_rows)
+
+            st.dataframe(
+                overview_frame,
+                use_container_width=True,
+                hide_index=True,
+                height=table_height(len(overview_frame)),
+            )
+
+            st.write(
+                "**Inhalt der einzelnen Endpunkte:**"
+            )
+
+            for source in manager_sources:
+                with st.expander(source["path"]):
+                    fields = flatten_fields(
+                        source["data"]
                     )
 
-                st.write("**Rohdaten:**")
-                st.json(source["data"])
+                    if fields:
+                        st.dataframe(
+                            pd.DataFrame(fields),
+                            use_container_width=True,
+                            hide_index=True,
+                            height=350,
+                        )
 
-    if manager_errors:
-        with st.expander("Endpunkte ohne Antwort"):
-            st.write(manager_errors)
+                    st.write("**Rohdaten:**")
+                    st.json(source["data"])
 
+        if manager_errors:
+            with st.expander("Endpunkte ohne Antwort"):
+                st.write(manager_errors)
 
-# ---------------------------------------------------------
-# Diagnose der Transferquellen
-# ---------------------------------------------------------
-
-with st.expander("Diagnose der Transferquellen"):
-    if feed_samples:
-        for sample in feed_samples:
-            with st.expander(sample["Quelle"]):
-                st.json(sample["Daten"])
-    else:
-        st.write("Keine Quelle hat geantwortet.")
+    with st.expander("Diagnose der Transferquellen"):
+        if feed_samples:
+            for sample in feed_samples:
+                with st.expander(sample["Quelle"]):
+                    st.json(sample["Daten"])
+        else:
+            st.write("Keine Quelle hat geantwortet.")
