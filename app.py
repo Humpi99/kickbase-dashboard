@@ -23,8 +23,8 @@ COLOR_NEUTRAL = "#1c1c1c"
 COLOR_LABEL = "#8a8a8a"
 COLOR_LINE = "#e6e6e6"
 
-# Startbudget jedes Managers zu Saisonbeginn
-DEFAULT_START_BUDGET = 150_000_000
+# Fester Grundwert: damit startet jeder Manager
+BASE_BUDGET = 150_000_000
 
 
 # ---------------------------------------------------------
@@ -906,21 +906,22 @@ def compute_stats(players):
     return stats
 
 
-def compute_budget(stats, total_profit, start_budget,
+def compute_budget(stats, total_profit, bonus,
                    days_to_matchday, real_balance=None):
     """
     Ermittelt das Budget eines Managers.
 
     Wenn real_balance gesetzt ist, wird dieser echte
     Kontostand genutzt. Sonst wird geschaetzt:
-    Startbudget plus Gewinn gesamt minus Kaderwert.
+    Grundwert plus Bonus plus Gewinn minus Kaderwert.
     """
     if real_balance is not None:
         balance = real_balance
         is_real = True
     else:
         balance = (
-            start_budget
+            BASE_BUDGET
+            + bonus
             + total_profit
             - stats["squad_value"]
         )
@@ -984,6 +985,55 @@ def is_own_manager(api, manager_id):
         return False
 
     return str(own_id) == str(manager_id)
+
+
+def compute_own_bonus(api, league_id, real_balance):
+    """
+    Ermittelt den eigenen Bonus.
+
+    Bonus = echter Kontostand minus reine Berechnung.
+    Reine Berechnung = Grundwert plus Gewinn
+    minus Kaderwert.
+    """
+    own_id = getattr(api, "own_user_id", None)
+
+    if not own_id or real_balance is None:
+        return None
+
+    players, _ = load_manager_players(
+        api,
+        league_id,
+        own_id,
+    )
+
+    if not players:
+        return None
+
+    stats = compute_stats(players)
+
+    realized, _ = load_realized_profit(
+        api,
+        league_id,
+        own_id,
+    )
+
+    total_profit = (
+        stats["profit_in_club"] + (realized or 0.0)
+    )
+
+    plain = (
+        BASE_BUDGET
+        + total_profit
+        - stats["squad_value"]
+    )
+
+    return {
+        "plain": plain,
+        "real": real_balance,
+        "bonus": real_balance - plain,
+        "profit": total_profit,
+        "squad_value": stats["squad_value"],
+    }
 
 
 # ---------------------------------------------------------
@@ -1189,7 +1239,7 @@ def tone_of(value):
     return "plus" if number > 0 else "minus"
 
 
-def build_budget_kpis(budget, stats, start_budget,
+def build_budget_kpis(budget, stats, bonus,
                       days_to_matchday, days_source,
                       budget_source):
     """Baut die Einträge für den Budget-Block."""
@@ -1200,8 +1250,9 @@ def build_budget_kpis(budget, stats, start_budget,
         ]
     else:
         balance_notes = [
-            f"Start: {format_currency(start_budget)}",
-            "geschätzt: plus Gewinn, minus Kaderwert",
+            f"{format_currency(BASE_BUDGET)} Start "
+            f"plus {format_currency(bonus)} Bonus",
+            "plus Gewinn, minus Kaderwert",
         ]
 
     return [
@@ -1475,21 +1526,13 @@ st.sidebar.markdown("---")
 st.sidebar.markdown(
     f"<div style='font-size:12px;font-weight:500;"
     f"letter-spacing:0.08em;text-transform:uppercase;"
-    f"color:{COLOR_LABEL};margin-bottom:8px;'>"
-    f"Budget</div>",
+    f"color:{COLOR_LABEL};margin-bottom:4px;'>"
+    f"Budget</div>"
+    f"<div style='font-size:12px;color:{COLOR_LABEL};"
+    f"margin-bottom:10px;'>Grundwert fest: "
+    f"{format_currency(BASE_BUDGET)}</div>",
     unsafe_allow_html=True,
 )
-
-start_budget_mio = st.sidebar.number_input(
-    "Startbudget in Mio. €",
-    min_value=0.0,
-    max_value=500.0,
-    value=DEFAULT_START_BUDGET / 1_000_000,
-    step=5.0,
-    help="Nur für die Schätzung fremder Manager.",
-)
-
-start_budget = start_budget_mio * 1_000_000
 
 # Echter Kontostand des eigenen Accounts
 budget_key = f"own_budget_{league_id}"
@@ -1503,15 +1546,64 @@ if budget_key not in st.session_state:
 
 own_budget, own_budget_source = st.session_state[budget_key]
 
-if own_budget is not None:
-    st.sidebar.caption(
-        f"Eigener Kontostand: "
-        f"{format_currency(own_budget)}"
+# Eigenen Bonus als Differenz ermitteln
+bonus_key = f"own_bonus_{league_id}"
+
+if st.sidebar.button("Bonus neu berechnen"):
+    st.session_state.pop(bonus_key, None)
+    st.session_state.pop(budget_key, None)
+    st.rerun()
+
+if bonus_key not in st.session_state:
+    with st.spinner("Bonus wird ermittelt …"):
+        st.session_state[bonus_key] = compute_own_bonus(
+            api,
+            league_id,
+            own_budget,
+        )
+
+own_bonus_info = st.session_state[bonus_key]
+
+if own_bonus_info is not None:
+    suggested_bonus = own_bonus_info["bonus"] / 1_000_000
+    bonus_hint = (
+        "Vorschlag aus deiner eigenen Differenz"
     )
 else:
+    suggested_bonus = 0.0
+    bonus_hint = (
+        "Kein eigener Kontostand gefunden, "
+        "Bonus bitte selbst schätzen."
+    )
+
+bonus_mio = st.sidebar.number_input(
+    "Bonus in Mio. €",
+    min_value=-200.0,
+    max_value=500.0,
+    value=round(float(suggested_bonus), 2),
+    step=0.5,
+    help=(
+        "Wird bei fremden Managern zum Grundwert "
+        "von 150 Mio. € addiert."
+    ),
+)
+
+bonus = bonus_mio * 1_000_000
+
+st.sidebar.caption(bonus_hint)
+
+if own_bonus_info is not None:
     st.sidebar.caption(
-        "Eigener Kontostand nicht gefunden, "
-        "es wird geschätzt."
+        "Deine reine Berechnung: "
+        + format_currency(own_bonus_info["plain"])
+    )
+    st.sidebar.caption(
+        "Dein echter Kontostand: "
+        + format_currency(own_bonus_info["real"])
+    )
+    st.sidebar.caption(
+        "Differenz als Bonus: "
+        + format_signed_currency(own_bonus_info["bonus"])
     )
 
 # Tage bis zum Spieltag aus der API suchen
@@ -1686,9 +1778,10 @@ if view == "Liga":
             columns=["_sort"]
         )
 
-    # Geschaetzter Kontostand
+    # Geschaetzter Kontostand mit Grundwert und Bonus
     league_frame["Kontostand"] = (
-        start_budget
+        BASE_BUDGET
+        + bonus
         + league_frame["Gewinn gesamt"]
         - league_frame["Kaderwert"]
     )
@@ -1779,15 +1872,17 @@ if view == "Liga":
 
     if own_budget is not None:
         st.caption(
-            f"Eigener Kontostand echt aus der API, "
-            f"alle anderen geschätzt mit "
-            f"{format_currency(start_budget)} Startbudget "
+            f"Eigener Kontostand echt aus der API. "
+            f"Alle anderen geschätzt mit "
+            f"{format_currency(BASE_BUDGET)} Grundwert "
+            f"plus {format_currency(bonus)} Bonus "
             f"und {days_to_matchday} Tagen bis zum Spieltag."
         )
     else:
         st.caption(
             f"Alle Kontostände geschätzt mit "
-            f"{format_currency(start_budget)} Startbudget "
+            f"{format_currency(BASE_BUDGET)} Grundwert "
+            f"plus {format_currency(bonus)} Bonus "
             f"und {days_to_matchday} Tagen bis zum Spieltag."
         )
 
@@ -1930,7 +2025,7 @@ real_balance = own_budget if viewing_self else None
 budget = compute_budget(
     stats,
     total_profit,
-    start_budget,
+    bonus,
     days_to_matchday,
     real_balance=real_balance,
 )
@@ -2059,7 +2154,7 @@ with st.expander(
         build_budget_kpis(
             budget,
             stats,
-            start_budget,
+            bonus,
             days_to_matchday,
             days_source,
             own_budget_source,
