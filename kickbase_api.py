@@ -138,21 +138,37 @@ class KickbaseAPI:
 
         return results, errors
 
+    def get_ranking(self, league_id, day_number=None):
+        """
+        Lädt das Liga-Ranking.
+
+        Das Ranking enthält in der App die Kaderwerte
+        aller Managerinnen und Manager.
+        """
+        params = {}
+
+        if day_number is not None:
+            params["dayNumber"] = day_number
+
+        paths = [
+            f"/v4/leagues/{league_id}/ranking",
+            f"/v4/leagues/{league_id}/standings",
+            f"/v4/leagues/{league_id}/table",
+        ]
+
+        return self.try_paths(
+            paths,
+            params=params if params else None,
+        )
+
     def get_league_sources(self, league_id):
         """Lädt mögliche Quellen für Liga- und Managerinformationen."""
         paths = [
             f"/v4/leagues/{league_id}",
+            f"/v4/leagues/{league_id}/ranking",
             f"/v4/leagues/{league_id}/info",
             f"/v4/leagues/{league_id}/overview",
-            f"/v4/leagues/{league_id}/ranking",
-            f"/v4/leagues/{league_id}/dashboard",
             f"/v4/leagues/{league_id}/users",
-            f"/v4/leagues/{league_id}/stats",
-            f"/leagues/{league_id}",
-            f"/leagues/{league_id}/info",
-            f"/leagues/{league_id}/ranking",
-            f"/leagues/{league_id}/users",
-            f"/leagues/{league_id}/stats",
         ]
 
         return self.try_paths(paths)
@@ -161,8 +177,7 @@ class KickbaseAPI:
         """
         Lädt den Team-Center eines Managers.
 
-        Der korrekte v4-Pfad lautet:
-        /v4/leagues/{leagueId}/users/{userId}/teamcenter
+        Enthält Kader und in der Regel auch Kaufpreise.
         """
         paths = [
             f"/v4/leagues/{league_id}/users/{user_id}/teamcenter",
@@ -178,11 +193,10 @@ class KickbaseAPI:
 
         raise Exception(" | ".join(errors))
 
-    def get_market(self, league_id):
-        """Lädt den Transfermarkt."""
+    def get_player_detail(self, league_id, player_id):
+        """Lädt Details zu einem Spieler, inklusive Kaufpreis."""
         paths = [
-            f"/v4/leagues/{league_id}/market",
-            f"/leagues/{league_id}/market",
+            f"/v4/leagues/{league_id}/players/{player_id}",
         ]
 
         results, errors = self.try_paths(paths)
@@ -192,17 +206,13 @@ class KickbaseAPI:
 
         raise Exception(" | ".join(errors))
 
-    def get_league_feed(self, league_id, start=0):
-        """Lädt den Liga-Feed."""
+    def get_market(self, league_id):
+        """Lädt den Transfermarkt."""
         paths = [
-            f"/v4/leagues/{league_id}/feed",
-            f"/leagues/{league_id}/feed",
+            f"/v4/leagues/{league_id}/market",
         ]
 
-        results, errors = self.try_paths(
-            paths,
-            params={"start": start},
-        )
+        results, errors = self.try_paths(paths)
 
         if results:
             return results[0]["data"]
@@ -213,7 +223,6 @@ class KickbaseAPI:
         """Lädt die eigenen Finanzdaten."""
         paths = [
             f"/v4/leagues/{league_id}/me",
-            f"/leagues/{league_id}/me",
         ]
 
         results, errors = self.try_paths(paths)
