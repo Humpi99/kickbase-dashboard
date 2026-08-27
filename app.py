@@ -227,8 +227,9 @@ def get_lineup_slot(player):
     """
     Ermittelt den Platz in der Startelf.
 
-    Zahl von 0 bis 10 bedeutet aufgestellt.
-    None bedeutet Bank.
+    Rückgabe:
+    Zahl von 0 bis 10, wenn aufgestellt.
+    None, wenn der Spieler auf der Bank sitzt.
     """
     if not isinstance(player, dict):
         return None
@@ -495,124 +496,14 @@ def collect_money_fields(value, prefix="", depth=0):
 
 
 # ---------------------------------------------------------
-# Transfers erkennen
+# Transfers aus dem Liga-Feed
 # ---------------------------------------------------------
 
-def extract_transfer_events(data, depth=0):
-    """
-    Sammelt alle Einträge, die wie ein Transfer aussehen.
-
-    Ein Transfer hat eine Spieler-ID und einen Preis.
-    """
-    events = []
-
-    if depth > 6:
-        return events
-
-    if isinstance(data, list):
-        for item in data:
-            events.extend(
-                extract_transfer_events(item, depth + 1)
-            )
-
-        return events
-
-    if not isinstance(data, dict):
-        return events
-
-    player_id = first_value(
-        data,
-        ["pi", "playerId", "pid", "plid"],
-    )
-
-    amount = to_number(
-        first_value(
-            data,
-            [
-                "trp",
-                "price",
-                "pr",
-                "value",
-                "v",
-                "tp",
-            ],
-        )
-    )
-
-    buyer = first_value(
-        data,
-        ["byr", "buyerId", "bid"],
-    )
-
-    seller = first_value(
-        data,
-        ["slr", "sellerId", "sid"],
-    )
-
-    if (
-        player_id is not None
-        and amount is not None
-        and (buyer is not None or seller is not None)
-    ):
-        events.append(
-            {
-                "player_id": str(player_id),
-                "amount": amount,
-                "buyer": str(buyer)
-                if buyer is not None
-                else None,
-                "seller": str(seller)
-                if seller is not None
-                else None,
-                "name": get_player_name(data),
-            }
-        )
-
-    for nested_value in data.values():
-        events.extend(
-            extract_transfer_events(
-                nested_value,
-                depth + 1,
-            )
-        )
-
-    return events
-
-
 def load_feed_transfers(api, league_id, manager_id):
-    """
-    Berechnet den realisierten Gewinn.
+    """Liest Käufe und Verkäufe eines Managers."""
+    all_items = []
 
-    Gewinn entsteht, wenn ein Spieler gekauft
-    und danach wieder verkauft wurde.
-    """
-    events = []
-    raw_samples = []
-
-    # Transferhistorie des Managers versuchen
-    try:
-        sources, _ = api.get_manager_transfers(
-            league_id,
-            manager_id,
-        )
-
-        for source in sources:
-            events.extend(
-                extract_transfer_events(source["data"])
-            )
-
-            if len(raw_samples) < 1:
-                raw_samples.append(
-                    {
-                        "Quelle": source["path"],
-                        "Daten": source["data"],
-                    }
-                )
-    except Exception:
-        pass
-
-    # Liga-Feed durchgehen
-    for start in range(0, 400, 25):
+    for start in range(0, 300, 25):
         try:
             sources, _ = api.get_league_feed(
                 league_id,
@@ -621,48 +512,71 @@ def load_feed_transfers(api, league_id, manager_id):
         except Exception:
             break
 
-        page_events = []
+        page_items = []
 
         for source in sources:
-            page_events.extend(
-                extract_transfer_events(source["data"])
-            )
+            data = source["data"]
 
-            if start == 0 and len(raw_samples) < 2:
-                raw_samples.append(
-                    {
-                        "Quelle": source["path"],
-                        "Daten": source["data"],
-                    }
+            if isinstance(data, dict):
+                items = (
+                    data.get("af")
+                    or data.get("items")
+                    or data.get("it")
+                    or []
                 )
 
-        if not page_events:
+                if isinstance(items, list):
+                    page_items.extend(items)
+
+        if not page_items:
             break
 
-        events.extend(page_events)
+        all_items.extend(page_items)
 
-    # Käufe und Verkäufe je Spieler sortieren
     purchases = {}
     sales = {}
-    names = {}
 
-    for event in events:
-        player_id = event["player_id"]
+    for item in all_items:
+        if not isinstance(item, dict):
+            continue
 
-        if event["name"] != "Unbekannt":
-            names[player_id] = event["name"]
+        meta = first_value(
+            item,
+            ["meta", "m", "data"],
+            {},
+        )
 
-        if event["buyer"] == str(manager_id):
+        if not isinstance(meta, dict):
+            meta = {}
+
+        buyer = first_value(meta, ["byr", "buyerId"])
+        seller = first_value(meta, ["slr", "sellerId"])
+
+        player_id = first_value(
+            meta,
+            ["pi", "playerId", "pid"],
+        )
+
+        amount = to_number(
+            first_value(
+                meta,
+                ["trp", "price", "pr", "v", "value"],
+            )
+        )
+
+        if amount is None or player_id is None:
+            continue
+
+        if str(buyer) == str(manager_id):
             purchases.setdefault(
-                player_id, []
-            ).append(event["amount"])
+                str(player_id), []
+            ).append(amount)
 
-        if event["seller"] == str(manager_id):
+        if str(seller) == str(manager_id):
             sales.setdefault(
-                player_id, []
-            ).append(event["amount"])
+                str(player_id), []
+            ).append(amount)
 
-    # Gewinn nur für verkaufte Spieler
     realized = 0.0
     trades = []
 
@@ -672,25 +586,18 @@ def load_feed_transfers(api, league_id, manager_id):
         for index, sale_price in enumerate(sale_prices):
             if index < len(buy_prices):
                 buy_price = buy_prices[index]
-                known_price = True
             else:
                 buy_price = 0.0
-                known_price = False
 
             profit = sale_price - buy_price
             realized += profit
 
             trades.append(
                 {
-                    "Spieler": names.get(
-                        player_id,
-                        player_id,
-                    ),
+                    "Spieler-ID": player_id,
                     "Kaufpreis": format_currency(
                         buy_price
-                    )
-                    if known_price
-                    else "Zulosung",
+                    ),
                     "Verkaufspreis": format_currency(
                         sale_price
                     ),
@@ -700,7 +607,7 @@ def load_feed_transfers(api, league_id, manager_id):
                 }
             )
 
-    return realized, trades, purchases, raw_samples
+    return realized, trades, purchases
 
 
 # ---------------------------------------------------------
@@ -876,21 +783,19 @@ except Exception as error:
 
 
 # ---------------------------------------------------------
-# Transfers lesen
+# Feed lesen
 # ---------------------------------------------------------
 
 realized_profit = None
 realized_trades = []
 feed_purchases = {}
-feed_samples = []
 
 if show_realized and players:
-    with st.spinner("Transferhistorie wird gelesen …"):
+    with st.spinner("Liga-Feed wird gelesen …"):
         (
             realized_profit,
             realized_trades,
             feed_purchases,
-            feed_samples,
         ) = load_feed_transfers(
             api,
             league_id,
@@ -1056,9 +961,7 @@ st.subheader(
     f"📊 Kennzahlen: {selected_manager_name}"
 )
 
-row1_col1, row1_col2, row1_col3, row1_col4 = (
-    st.columns(4)
-)
+row1_col1, row1_col2, row1_col3 = st.columns(3)
 
 row1_col1.metric(
     "Kaderwert",
@@ -1078,15 +981,6 @@ row1_col3.metric(
     help=f"{trading_count} Spieler auf der Bank",
 )
 
-row1_col4.metric(
-    "Spieler im Verein",
-    len(players),
-    help=(
-        f"{lineup_count} in der Startelf, "
-        f"{trading_count} auf der Bank"
-    ),
-)
-
 row2_col1, row2_col2, row2_col3, row2_col4 = (
     st.columns(4)
 )
@@ -1101,7 +995,6 @@ row2_col2.metric(
     format_signed_currency(realized_profit)
     if realized_profit is not None
     else "—",
-    help=f"{len(realized_trades)} Verkäufe erkannt",
 )
 
 total_profit = profit_in_club
@@ -1212,20 +1105,6 @@ else:
 
 
 # ---------------------------------------------------------
-# Verkaufte Spieler
-# ---------------------------------------------------------
-
-if realized_trades:
-    st.subheader("💸 Verkaufte Spieler")
-
-    st.dataframe(
-        pd.DataFrame(realized_trades),
-        use_container_width=True,
-        hide_index=True,
-    )
-
-
-# ---------------------------------------------------------
 # Diagnose
 # ---------------------------------------------------------
 
@@ -1255,7 +1134,7 @@ with st.expander("🔎 Diagnose"):
         else:
             st.write("Keine Beträge gefunden.")
 
-    st.write("**Erkannte Transfers:**")
+    st.write("**Trades aus dem Feed:**")
 
     if realized_trades:
         st.dataframe(
@@ -1264,28 +1143,4 @@ with st.expander("🔎 Diagnose"):
             hide_index=True,
         )
     else:
-        st.write("Keine Transfers erkannt.")
-
-    st.write("**Rohdaten der Transferquellen:**")
-
-    if feed_samples:
-        for sample in feed_samples:
-            with st.expander(sample["Quelle"]):
-                st.json(sample["Daten"])
-    else:
-        st.write("Keine Quelle hat geantwortet.")
-Voraussetzung in kickbase_api.py
-Falls noch nicht geschehen, muss dort diese Methode vorhanden sein:
-
-    def get_manager_transfers(self, league_id, manager_id):
-        """Lädt die Transferhistorie eines Managers."""
-        paths = [
-            f"/v4/leagues/{league_id}"
-            f"/managers/{manager_id}/transfers",
-            f"/v4/leagues/{league_id}"
-            f"/managers/{manager_id}/activities",
-            f"/v4/leagues/{league_id}"
-            f"/managers/{manager_id}/performance",
-        ]
-
-        return self.try_paths(paths)
+        st.write("Keine Trades erkannt.")
