@@ -146,11 +146,7 @@ class KickbaseAPI:
         return self.try_paths(paths)
 
     def get_manager_squad(self, league_id, manager_id):
-        """
-        Lädt den Kader eines bestimmten Managers.
-
-        Nur dieser Pfad liefert auch fremde Kader.
-        """
+        """Lädt den Kader eines bestimmten Managers."""
         path = (
             f"/v4/leagues/{league_id}"
             f"/managers/{manager_id}/squad"
@@ -158,29 +154,42 @@ class KickbaseAPI:
 
         return self.get(path)
 
-    def get_player_detail(self, league_id, player_id):
+    def explore_manager(self, league_id, manager_id):
         """
-        Lädt die Detailansicht eines Spielers.
+        Probiert alle bekannten Manager-Endpunkte durch.
 
-        Enthält Kaufpreis und Gewinn.
+        Dient dazu, verfügbare Informationen zu finden.
         """
+        base = f"/v4/leagues/{league_id}/managers/{manager_id}"
+
         paths = [
-            f"/v4/leagues/{league_id}/players/{player_id}",
+            base,
+            f"{base}/squad",
+            f"{base}/performance",
+            f"{base}/dashboard",
+            f"{base}/profile",
+            f"{base}/stats",
+            f"{base}/transfers",
+            f"{base}/activities",
+            f"{base}/activitiesFeed",
+            f"{base}/feed",
+            f"{base}/teamcenter",
+            f"{base}/lineup",
+            f"{base}/budget",
+            f"{base}/matchdays",
+            f"{base}/season",
+            f"{base}/points",
+            f"{base}/history",
+            f"{base}/achievements",
+            f"/v4/leagues/{league_id}/users/{manager_id}",
+            f"/v4/leagues/{league_id}/users/{manager_id}/profile",
+            f"/v4/leagues/{league_id}/users/{manager_id}/stats",
         ]
 
-        results, errors = self.try_paths(paths)
-
-        if results:
-            return results[0]["data"]
-
-        raise Exception(" | ".join(errors))
+        return self.try_paths(paths)
 
     def get_manager_transfers(self, league_id, manager_id):
-        """
-        Lädt die Transferhistorie eines Managers.
-
-        Enthält Käufe und Verkäufe mit Preisen.
-        """
+        """Lädt die Transferhistorie eines Managers."""
         paths = [
             f"/v4/leagues/{league_id}"
             f"/managers/{manager_id}/transfers",
