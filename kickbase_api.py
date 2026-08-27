@@ -176,6 +176,7 @@ class KickbaseAPI:
         """Lädt eine Seite des Liga-Feeds."""
         paths = [
             f"/v4/leagues/{league_id}/activitiesFeed",
+            f"/v4/leagues/{league_id}/activities",
             f"/v4/leagues/{league_id}/feed",
         ]
 
@@ -183,3 +184,20 @@ class KickbaseAPI:
             paths,
             params={"start": start, "max": 25},
         )
+
+    def get_manager_transfers(self, league_id, manager_id):
+        """
+        Lädt die Transferhistorie eines Managers.
+
+        Enthält Käufe und Verkäufe mit Preisen.
+        """
+        paths = [
+            f"/v4/leagues/{league_id}"
+            f"/managers/{manager_id}/transfers",
+            f"/v4/leagues/{league_id}"
+            f"/managers/{manager_id}/activities",
+            f"/v4/leagues/{league_id}"
+            f"/managers/{manager_id}/performance",
+        ]
+
+        return self.try_paths(paths)
