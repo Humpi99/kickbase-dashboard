@@ -84,34 +84,61 @@ class KickbaseAPI:
             f"Anmeldung fehlgeschlagen. Status: {response.status_code}"
         )
 
+    def restore_session(self, token, own_user_id=None):
+        """
+        Stellt eine zuvor gespeicherte Token-Sitzung wieder her.
+
+        Das Passwort wird dafür nicht benötigt und nicht gespeichert.
+        """
+        if not token:
+            raise ValueError("Es wurde kein Kickbase-Token übergeben.")
+
+        self.token = str(token)
+
+        if own_user_id is not None:
+            self.own_user_id = str(own_user_id)
+        else:
+            self.own_user_id = None
+
     def _find_own_user_id(self, data, depth=0):
         """
         Sucht die eigene Benutzer-ID in der Login-Antwort.
 
-        Kickbase liefert sie meist unter u.id oder user.id.
+        Kickbase liefert sie häufig innerhalb eines Benutzerobjekts.
         """
         if depth > 5:
             return None
 
         if isinstance(data, dict):
-            # Direkte Benutzerobjekte zuerst pruefen
             for key in ["u", "user", "me", "usr"]:
                 block = data.get(key)
 
                 if isinstance(block, dict):
-                    for id_key in ["i", "id", "userId", "ui"]:
+                    for id_key in [
+                        "i",
+                        "id",
+                        "userId",
+                        "uid",
+                        "ui",
+                    ]:
                         value = block.get(id_key)
 
-                        if value:
+                        if value is not None and not isinstance(
+                            value,
+                            bool,
+                        ):
                             return str(value)
 
             for key in ["userId", "uid", "ui"]:
                 value = data.get(key)
 
-                if value:
+                if value is not None and not isinstance(value, bool):
                     return str(value)
 
-            for value in data.values():
+            for key, value in data.items():
+                if key in ["tkn", "token", "accessToken"]:
+                    continue
+
                 result = self._find_own_user_id(
                     value,
                     depth + 1,
@@ -190,11 +217,11 @@ class KickbaseAPI:
 
     def get_ranking(self, league_id):
         """Lädt das Liga-Ranking mit den Managern."""
-        paths = [
-            f"/v4/leagues/{league_id}/ranking",
-        ]
-
-        return self.try_paths(paths)
+        return self.try_paths(
+            [
+                f"/v4/leagues/{league_id}/ranking",
+            ]
+        )
 
     def get_manager_squad(self, league_id, manager_id):
         """Lädt den Kader eines bestimmten Managers."""
@@ -207,9 +234,9 @@ class KickbaseAPI:
 
     def explore_manager(self, league_id, manager_id):
         """
-        Probiert alle bekannten Manager-Endpunkte durch.
+        Probiert bekannte Manager-Endpunkte durch.
 
-        Dient dazu, verfügbare Informationen zu finden.
+        Dient zur Diagnose verfügbarer Informationen.
         """
         base = f"/v4/leagues/{league_id}/managers/{manager_id}"
         user_base = f"/v4/leagues/{league_id}/users/{manager_id}"
@@ -241,22 +268,30 @@ class KickbaseAPI:
         return self.try_paths(paths)
 
     def get_manager_transfers(self, league_id, manager_id):
-        """Lädt die Transferhistorie eines Managers."""
+        """Lädt mögliche Transferquellen eines Managers."""
         paths = [
-            f"/v4/leagues/{league_id}"
-            f"/managers/{manager_id}/transfers",
-            f"/v4/leagues/{league_id}"
-            f"/managers/{manager_id}/activities",
-            f"/v4/leagues/{league_id}"
-            f"/managers/{manager_id}/performance",
-            f"/v4/leagues/{league_id}"
-            f"/managers/{manager_id}/dashboard",
+            (
+                f"/v4/leagues/{league_id}"
+                f"/managers/{manager_id}/transfers"
+            ),
+            (
+                f"/v4/leagues/{league_id}"
+                f"/managers/{manager_id}/activities"
+            ),
+            (
+                f"/v4/leagues/{league_id}"
+                f"/managers/{manager_id}/performance"
+            ),
+            (
+                f"/v4/leagues/{league_id}"
+                f"/managers/{manager_id}/dashboard"
+            ),
         ]
 
         return self.try_paths(paths)
 
     def get_league_feed(self, league_id, start=0):
-        """Lädt eine Seite des Liga-Feeds."""
+        """Lädt eine Seite möglicher Liga-Feeds."""
         paths = [
             f"/v4/leagues/{league_id}/activitiesFeed",
             f"/v4/leagues/{league_id}/activities",
@@ -265,20 +300,19 @@ class KickbaseAPI:
 
         return self.try_paths(
             paths,
-            params={"start": start, "max": 25},
+            params={
+                "start": start,
+                "max": 25,
+            },
         )
 
     def get_market(self, league_id):
         """Lädt den Transfermarkt der Liga."""
-        paths = [
-            f"/v4/leagues/{league_id}/market",
-        ]
-
-        return self.try_paths(paths)
-
-    # -----------------------------------------------------
-    # Suche nach einzelnen Feldern
-    # -----------------------------------------------------
+        return self.try_paths(
+            [
+                f"/v4/leagues/{league_id}/market",
+            ]
+        )
 
     def find_field(self, data, field_name, depth=0):
         """Sucht rekursiv nach einem Feld mit Zahlenwert."""
@@ -289,15 +323,15 @@ class KickbaseAPI:
             if field_name in data:
                 value = data[field_name]
 
-                if isinstance(value, bool):
-                    pass
-                elif isinstance(value, (int, float)):
-                    return float(value)
-                elif isinstance(value, str):
-                    try:
+                if not isinstance(value, bool):
+                    if isinstance(value, (int, float)):
                         return float(value)
-                    except ValueError:
-                        pass
+
+                    if isinstance(value, str):
+                        try:
+                            return float(value)
+                        except ValueError:
+                            pass
 
             for nested_value in data.values():
                 result = self.find_field(
@@ -322,15 +356,11 @@ class KickbaseAPI:
 
         return None
 
-    # -----------------------------------------------------
-    # Realisierter Gewinn über das Feld prft
-    # -----------------------------------------------------
-
     def get_realized_profit(self, league_id, manager_id):
         """
         Liest den realisierten Gewinn aus dem Feld prft.
 
-        Rückgabe: (wert, quelle).
+        Rückgabe: (Wert, Quelle).
         """
         base = f"/v4/leagues/{league_id}/managers/{manager_id}"
         user_base = f"/v4/leagues/{league_id}/users/{manager_id}"
@@ -359,16 +389,11 @@ class KickbaseAPI:
 
         return None, None
 
-    # -----------------------------------------------------
-    # NEU: echter Kontostand des eigenen Accounts
-    # -----------------------------------------------------
-
     def get_budget(self, league_id):
         """
         Liest den echten Kontostand des angemeldeten Nutzers.
 
-        Rückgabe: (wert, quelle).
-        Wert ist None, wenn kein Budgetfeld gefunden wurde.
+        Rückgabe: (Wert, Quelle).
         """
         paths = [
             f"/v4/leagues/{league_id}/me/budget",
@@ -381,16 +406,21 @@ class KickbaseAPI:
         if self.own_user_id:
             paths.extend(
                 [
-                    f"/v4/leagues/{league_id}"
-                    f"/managers/{self.own_user_id}/dashboard",
-                    f"/v4/leagues/{league_id}"
-                    f"/managers/{self.own_user_id}/budget",
-                    f"/v4/leagues/{league_id}"
-                    f"/users/{self.own_user_id}/budget",
+                    (
+                        f"/v4/leagues/{league_id}"
+                        f"/managers/{self.own_user_id}/dashboard"
+                    ),
+                    (
+                        f"/v4/leagues/{league_id}"
+                        f"/managers/{self.own_user_id}/budget"
+                    ),
+                    (
+                        f"/v4/leagues/{league_id}"
+                        f"/users/{self.own_user_id}/budget"
+                    ),
                 ]
             )
 
-        # Reihenfolge der moeglichen Feldnamen
         field_names = ["b", "budget", "bs", "bdg"]
 
         for path in paths:
@@ -402,7 +432,6 @@ class KickbaseAPI:
             for field_name in field_names:
                 value = self.find_field(data, field_name)
 
-                # Sehr kleine Werte sind meist keine Betraege
                 if value is not None and abs(value) >= 1000:
                     return value, f"{path} ({field_name})"
 
