@@ -1,8 +1,5 @@
 """
 Kickbase Liga-Dashboard.
-
-Diese Version konzentriert sich zunächst darauf,
-Login, Liga und Manager zuverlässig zu laden.
 """
 
 import pandas as pd
@@ -163,7 +160,6 @@ def looks_like_manager(item):
     if manager_name == "Unbekannter Manager":
         return False
 
-    # Eindeutige Manager-Felder
     manager_fields = {
         "userId",
         "uid",
@@ -238,10 +234,7 @@ def find_leagues(value, depth=0):
 
 
 def find_managers(value, depth=0):
-    """
-    Durchsucht beliebige Liga-Antworten rekursiv
-    nach einer Liste von Managern.
-    """
+    """Sucht rekursiv nach einer Liste von Managern."""
     if depth > 8:
         return []
 
@@ -299,7 +292,7 @@ def find_managers(value, depth=0):
 
 def find_players(value, depth=0):
     """Sucht rekursiv nach Spielern."""
-    if depth > 6:
+    if depth > 7:
         return []
 
     if isinstance(value, list):
@@ -314,6 +307,7 @@ def find_players(value, depth=0):
                 or "fn" in item
                 or "lastName" in item
                 or "ln" in item
+                or "n" in item
             )
 
             has_player_value = (
@@ -321,6 +315,8 @@ def find_players(value, depth=0):
                 or "mv" in item
                 or "position" in item
                 or "pos" in item
+                or "totalPoints" in item
+                or "tp" in item
             )
 
             if has_name and has_player_value:
@@ -336,7 +332,16 @@ def find_players(value, depth=0):
                 return result
 
     if isinstance(value, dict):
-        for key in ["players", "p", "items", "it"]:
+        preferred_keys = [
+            "players",
+            "p",
+            "it",
+            "items",
+            "lp",
+            "squad",
+        ]
+
+        for key in preferred_keys:
             if key in value:
                 result = find_players(
                     value[key],
@@ -489,10 +494,7 @@ if not st.session_state.get("logged_in"):
         type="password",
     )
 
-    if st.sidebar.button(
-        "Einloggen",
-        type="primary",
-    ):
+    if st.sidebar.button("Einloggen", type="primary"):
         if not email or not password:
             st.sidebar.warning(
                 "Bitte E-Mail und Passwort eingeben."
@@ -523,9 +525,7 @@ if not st.session_state.get("logged_in"):
                     st.stop()
 
                 st.session_state["api"] = api
-                st.session_state["login_result"] = (
-                    login_result
-                )
+                st.session_state["login_result"] = login_result
                 st.session_state["leagues"] = leagues
                 st.session_state["logged_in"] = True
 
@@ -570,13 +570,10 @@ st.title(f"⚽ {league_name}")
 # Manager suchen
 # ---------------------------------------------------------
 
-# Zuerst direkt in den vorhandenen Liga-Daten suchen.
 managers = find_managers(selected_league)
 manager_sources = []
 manager_errors = []
 
-# Falls dort keine Manager enthalten sind,
-# weitere mögliche Liga-Endpunkte ausprobieren.
 if not managers:
     with st.spinner("Manager der Liga werden geladen …"):
         manager_sources, manager_errors = (
@@ -588,41 +585,21 @@ if not managers:
 
         if found:
             managers = found
-            st.caption(
-                "Managerquelle: "
-                + source["path"]
-            )
             break
 
-# Letzter Versuch: gesamte Login-Antwort durchsuchen.
 if not managers:
     managers = find_managers(login_result)
 
 
 # ---------------------------------------------------------
-# Ergebnis der Managersuche
+# Wenn keine Manager gefunden wurden
 # ---------------------------------------------------------
 
 if not managers:
     st.error(
         "Die Liga wurde gefunden, aber die Managerliste "
-        "konnte noch nicht erkannt werden."
+        "konnte nicht erkannt werden."
     )
-
-    st.write("Gefundene erfolgreiche Liga-Endpunkte:")
-
-    if manager_sources:
-        for source in manager_sources:
-            st.code(source["path"])
-    else:
-        st.write("Keine erfolgreichen Endpunkte.")
-
-    with st.expander(
-        "Struktur der ausgewählten Liga anzeigen"
-    ):
-        st.json(
-            safe_structure(selected_league)
-        )
 
     for source in manager_sources:
         with st.expander(
@@ -632,9 +609,7 @@ if not managers:
                 safe_structure(source["data"])
             )
 
-    with st.expander(
-        "Fehler der getesteten Endpunkte"
-    ):
+    with st.expander("Fehler der Endpunkte"):
         st.write(manager_errors)
 
     st.stop()
@@ -656,10 +631,6 @@ selected_manager = managers[manager_index]
 selected_user_id = get_manager_id(selected_manager)
 selected_manager_name = get_manager_name(
     selected_manager
-)
-
-st.success(
-    f"Manager ausgewählt: {selected_manager_name}"
 )
 
 
@@ -701,14 +672,10 @@ col3.metric(
 
 
 # ---------------------------------------------------------
-# Kader laden
+# Spieltag auswählen
 # ---------------------------------------------------------
 
-st.subheader(f"Kader von {selected_manager_name}")
-
-try:
-    with st.spinner("Kader wird geladen …"):
-        day_number = st.number_input(
+day_number = st.number_input(
     "Spieltag",
     min_value=1,
     max_value=34,
@@ -716,36 +683,328 @@ try:
     step=1,
 )
 
-with st.spinner("Kader wird geladen …"):
-    player_result = api.get_user_players(
-        league_id,
-        selected_user_id,
-        day_number=int(day_number),
-    )
+
+# ---------------------------------------------------------
+# Kader laden
+# ---------------------------------------------------------
+
+players = []
+players_error = None
+player_result = None
+
+try:
+    with st.spinner("Kader wird geladen …"):
+        player_result = api.get_user_players(
+            league_id,
+            selected_user_id,
+            day_number=int(day_number),
+        )
 
     players = find_players(player_result)
 
-    if players:
+except Exception as error:
+    players_error = str(error)
+
+
+# ---------------------------------------------------------
+# Tabs
+# ---------------------------------------------------------
+
+tabs = st.tabs(
+    [
+        "📋 Kader",
+        "🏪 Transfermarkt",
+        "💰 Finanzen",
+        "📜 Transferhistorie",
+    ]
+)
+
+tab_kader = tabs[0]
+tab_market = tabs[1]
+tab_finance = tabs[2]
+tab_history = tabs[3]
+
+
+# ---------------------------------------------------------
+# Tab: Kader
+# ---------------------------------------------------------
+
+with tab_kader:
+    st.subheader(
+        f"Kader von {selected_manager_name}"
+    )
+
+    if players_error:
+        st.error(
+            f"Kader konnte nicht geladen werden: "
+            f"{players_error}"
+        )
+
+    elif players:
+        st.metric("Anzahl Spieler", len(players))
+
         st.dataframe(
             create_player_table(players),
             use_container_width=True,
             hide_index=True,
         )
+
     else:
         st.info(
-            "Der Kader-Endpunkt antwortet, aber die "
-            "Spielerliste wurde noch nicht erkannt."
+            "Die Antwort kam an, aber es wurden keine "
+            "Spieler erkannt."
         )
 
-        with st.expander(
-            "Sichere Kaderstruktur anzeigen"
-        ):
-            st.json(
-                safe_structure(player_result)
+        if player_result is not None:
+            with st.expander(
+                "Sichere Struktur anzeigen"
+            ):
+                st.json(
+                    safe_structure(player_result)
+                )
+
+
+# ---------------------------------------------------------
+# Tab: Transfermarkt
+# ---------------------------------------------------------
+
+with tab_market:
+    st.subheader("Transfermarkt")
+
+    try:
+        market_result = api.get_market(league_id)
+        market_players = find_players(market_result)
+
+        if market_players:
+            market_rows = []
+
+            for player in market_players:
+                owner_id = first_value(
+                    player,
+                    [
+                        "userId",
+                        "uid",
+                        "ui",
+                        "ownerId",
+                        "sellerId",
+                    ],
+                )
+
+                if owner_id is not None:
+                    owner_text = (
+                        selected_manager_name
+                        if str(owner_id) == selected_user_id
+                        else "Anderer Manager"
+                    )
+                else:
+                    owner_text = "Kickbase"
+
+                market_rows.append(
+                    {
+                        "Spieler": get_player_name(player),
+                        "Marktwert": format_currency(
+                            first_value(
+                                player,
+                                ["marketValue", "mv"],
+                            )
+                        ),
+                        "Preis": format_currency(
+                            first_value(
+                                player,
+                                ["price", "pr", "value"],
+                            )
+                        ),
+                        "Anbieter": owner_text,
+                    }
+                )
+
+            st.dataframe(
+                pd.DataFrame(market_rows),
+                use_container_width=True,
+                hide_index=True,
             )
 
-except Exception as error:
-    st.warning(
-        f"Der Manager wurde gefunden, aber sein Kader "
-        f"konnte noch nicht geladen werden: {error}"
+        else:
+            st.info(
+                "Es wurden keine Marktspieler erkannt."
+            )
+
+            with st.expander(
+                "Sichere Struktur anzeigen"
+            ):
+                st.json(
+                    safe_structure(market_result)
+                )
+
+    except Exception as error:
+        st.warning(
+            f"Transfermarkt konnte nicht geladen "
+            f"werden: {error}"
+        )
+
+
+# ---------------------------------------------------------
+# Tab: Finanzen
+# ---------------------------------------------------------
+
+with tab_finance:
+    st.subheader(
+        f"Finanzen von {selected_manager_name}"
     )
+
+    team_value = first_value(
+        selected_manager,
+        ["teamValue", "tv", "squadValue", "sv"],
+    )
+
+    if team_value is None and players:
+        values = []
+
+        for player in players:
+            market_value = first_value(
+                player,
+                ["marketValue", "mv"],
+                0,
+            )
+
+            try:
+                values.append(float(market_value))
+            except (TypeError, ValueError):
+                pass
+
+        if values:
+            team_value = sum(values)
+
+    finance_col1, finance_col2 = st.columns(2)
+
+    finance_col1.metric(
+        "Kaderwert",
+        format_currency(team_value),
+    )
+
+    try:
+        me_result = api.get_me(league_id)
+
+        budget = first_value(
+            me_result,
+            ["budget", "b", "cash"],
+        )
+
+        finance_col2.metric(
+            "Eigenes Budget",
+            format_currency(budget),
+        )
+
+    except Exception:
+        finance_col2.metric(
+            "Eigenes Budget",
+            "Nicht verfügbar",
+        )
+
+
+# ---------------------------------------------------------
+# Tab: Transferhistorie
+# ---------------------------------------------------------
+
+with tab_history:
+    st.subheader("Transferhistorie der Liga")
+
+    feed_items = []
+
+    try:
+        for start in [0, 25, 50, 75]:
+            feed_result = api.get_league_feed(
+                league_id,
+                start,
+            )
+
+            if isinstance(feed_result, dict):
+                page_items = (
+                    feed_result.get("items")
+                    or feed_result.get("it")
+                    or []
+                )
+            else:
+                page_items = []
+
+            if not page_items:
+                break
+
+            feed_items.extend(page_items)
+
+    except Exception as error:
+        st.warning(
+            f"Feed konnte nicht geladen werden: {error}"
+        )
+
+    event_names = {
+        2: "Verkauf",
+        3: "Auf Markt gestellt",
+        12: "Kauf",
+    }
+
+    transfer_rows = []
+
+    for item in feed_items:
+        raw_type = first_value(item, ["type", "t"])
+
+        try:
+            item_type = int(raw_type)
+        except (TypeError, ValueError):
+            continue
+
+        if item_type not in event_names:
+            continue
+
+        meta = first_value(item, ["meta", "m"], {})
+
+        if not isinstance(meta, dict):
+            meta = {}
+
+        player_name = get_player_name(meta)
+
+        if player_name == "Unbekannt":
+            player_name = get_player_name(item)
+
+        amount = first_value(
+            meta,
+            ["value", "v", "price", "pr", "mv"],
+        )
+
+        date = first_value(
+            item,
+            ["date", "d", "createdAt"],
+            "—",
+        )
+
+        if isinstance(date, str) and "T" in date:
+            date = date.split("T")[0]
+
+        transfer_rows.append(
+            {
+                "Datum": date,
+                "Typ": event_names[item_type],
+                "Spieler": player_name,
+                "Betrag": format_currency(amount),
+            }
+        )
+
+    if transfer_rows:
+        st.dataframe(
+            pd.DataFrame(transfer_rows),
+            use_container_width=True,
+            hide_index=True,
+        )
+
+    else:
+        st.info(
+            "Es wurden keine Transferereignisse erkannt."
+        )
+
+        if feed_items:
+            with st.expander(
+                "Sichere Feed-Struktur anzeigen"
+            ):
+                st.json(
+                    safe_structure(feed_items[:3])
+                )
