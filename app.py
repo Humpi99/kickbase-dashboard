@@ -181,8 +181,8 @@ BUY_PRICE_KEYS = [
     "pp",
     "boughtFor",
     "bf",
-    "tp",
     "prc",
+    "tp",
 ]
 
 PROFIT_KEYS = [
@@ -292,12 +292,7 @@ def looks_like_manager(item):
 
 
 def looks_like_player_with_value(item):
-    """
-    Prüft, ob ein Objekt ein Spieler MIT Marktwert ist.
-
-    Nur solche Spieler sind für die Gewinnrechnung
-    brauchbar.
-    """
+    """Prüft, ob ein Objekt ein Spieler mit Marktwert ist."""
     if not isinstance(item, dict):
         return False
 
@@ -547,7 +542,6 @@ st.title(f"⚽ {league_name}")
 # ---------------------------------------------------------
 
 managers = []
-ranking_path = None
 ranking_errors = []
 
 with st.spinner("Ranking wird geladen …"):
@@ -560,7 +554,6 @@ for source in ranking_sources:
 
     if found:
         managers = found
-        ranking_path = source["path"]
         break
 
 if not managers:
@@ -573,7 +566,7 @@ if not managers:
 
 
 # ---------------------------------------------------------
-# Liga-Ranking nach Kaderwert
+# Ranking-Tabelle
 # ---------------------------------------------------------
 
 st.subheader("🏆 Kaderwerte der Liga")
@@ -620,39 +613,34 @@ manager_index = st.selectbox(
 )
 
 selected_manager = managers[manager_index]
-selected_user_id = get_manager_id(selected_manager)
+selected_manager_id = get_manager_id(selected_manager)
 selected_manager_name = get_manager_name(
     selected_manager
 )
 
 
 # ---------------------------------------------------------
-# Kader suchen
+# Kader des gewählten Managers laden
 # ---------------------------------------------------------
 
 players = []
-squad_path = None
-squad_sources = []
-squad_errors = []
+squad_error = None
+squad_result = None
 
-with st.spinner("Kader wird gesucht …"):
-    squad_sources, squad_errors = (
-        api.get_squad_candidates(
+try:
+    with st.spinner(
+        f"Kader von {selected_manager_name} "
+        "wird geladen …"
+    ):
+        squad_result = api.get_manager_squad(
             league_id,
-            selected_user_id,
+            selected_manager_id,
         )
-    )
 
-# Bevorzugt die Quelle mit den meisten Spielern nehmen.
-best_count = 0
+    players = find_players_with_value(squad_result)
 
-for source in squad_sources:
-    found = find_players_with_value(source["data"])
-
-    if len(found) > best_count:
-        players = found
-        squad_path = source["path"]
-        best_count = len(found)
+except Exception as error:
+    squad_error = str(error)
 
 
 # ---------------------------------------------------------
@@ -683,9 +671,11 @@ if players:
 
 total_profit = None
 profit_count = 0
+total_buy = None
 
 if players:
     profits = []
+    buy_prices = []
 
     for player in players:
         profit = get_player_profit(player)
@@ -694,10 +684,18 @@ if players:
             profits.append(profit)
             profit_count += 1
 
+        buy_price = get_buy_price(player)
+
+        if buy_price is not None:
+            buy_prices.append(buy_price)
+
     if profits:
         total_profit = sum(profits)
 
-col1, col2, col3 = st.columns(3)
+    if buy_prices:
+        total_buy = sum(buy_prices)
+
+col1, col2, col3, col4 = st.columns(4)
 
 col1.metric(
     "Kaderwert",
@@ -710,8 +708,18 @@ col2.metric(
 )
 
 col3.metric(
+    "Summe Kaufpreise",
+    format_currency(total_buy),
+)
+
+col4.metric(
     "Gewinn gesamt",
     format_signed_currency(total_profit),
+)
+
+st.caption(
+    f"Manager-ID: {selected_manager_id} · "
+    f"Spieler geladen: {len(players)}"
 )
 
 
@@ -723,10 +731,13 @@ st.subheader(
     f"📋 Kader von {selected_manager_name}"
 )
 
-if players:
-    if squad_path:
-        st.caption(f"Datenquelle: {squad_path}")
+if squad_error:
+    st.error(
+        f"Kader konnte nicht geladen werden: "
+        f"{squad_error}"
+    )
 
+elif players:
     positions = {
         1: "Torwart",
         2: "Abwehr",
@@ -795,50 +806,21 @@ if players:
         )
 
         with st.expander(
-            "Felder eines Spielers"
+            "Alle Felder eines Spielers"
         ):
             st.write(sorted(players[0].keys()))
-            st.json(safe_structure(players[0]))
+            st.json(players[0])
 
 else:
-    st.warning(
-        "Es wurde noch kein Kader mit Marktwerten "
-        "gefunden."
+    st.info(
+        "Für diesen Manager wurden keine Spieler "
+        "mit Marktwert gefunden."
     )
 
-
-# ---------------------------------------------------------
-# Diagnose der getesteten Endpunkte
-# ---------------------------------------------------------
-
-st.markdown("---")
-
-with st.expander(
-    "🔎 Welche Kader-Endpunkte funktionieren?"
-):
-    if squad_sources:
-        st.write("**Erfolgreiche Endpunkte:**")
-
-        for source in squad_sources:
-            found = find_players_with_value(
-                source["data"]
+    if squad_result is not None:
+        with st.expander(
+            "Sichere Struktur anzeigen"
+        ):
+            st.json(
+                safe_structure(squad_result)
             )
-
-            st.write(
-                f"- `{source['path']}` "
-                f"→ {len(found)} Spieler mit Marktwert"
-            )
-
-        st.write("**Strukturen:**")
-
-        for source in squad_sources:
-            with st.expander(source["path"]):
-                st.json(
-                    safe_structure(source["data"])
-                )
-
-    else:
-        st.write("Kein Endpunkt hat geantwortet.")
-
-    st.write("**Fehler:**")
-    st.write(squad_errors)
