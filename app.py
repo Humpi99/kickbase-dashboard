@@ -1,7 +1,7 @@
 """
 Kickbase Liga-Dashboard.
 
-Fokus: Kaderwert und realisierter Gewinn.
+Fokus: Kaderwert und Gewinn je Manager.
 """
 
 import pandas as pd
@@ -11,7 +11,7 @@ from kickbase_api import KickbaseAPI
 
 
 # ---------------------------------------------------------
-# Grundlegende Hilfsfunktionen
+# Basis-Hilfsfunktionen
 # ---------------------------------------------------------
 
 def first_value(data, keys, default=None):
@@ -29,6 +29,9 @@ def first_value(data, keys, default=None):
 def to_number(value):
     """Wandelt einen Wert sicher in eine Zahl um."""
     if value is None or value == "":
+        return None
+
+    if isinstance(value, bool):
         return None
 
     try:
@@ -60,19 +63,10 @@ def format_signed_currency(value):
     if number is None:
         return "—"
 
-    prefix = "+" if number >= 0 else "-"
+    if number >= 0:
+        return f"+{format_currency(number)}"
 
-    return f"{prefix}{format_currency(abs(number))}"
-
-
-def format_number(value):
-    """Formatiert eine einfache Zahl."""
-    number = to_number(value)
-
-    if number is None:
-        return "—"
-
-    return f"{int(number):,}".replace(",", ".")
+    return f"-{format_currency(abs(number))}"
 
 
 # ---------------------------------------------------------
@@ -119,6 +113,7 @@ def get_manager_name(manager):
             manager,
             [
                 "name",
+                "unm",
                 "n",
                 "username",
                 "un",
@@ -132,14 +127,6 @@ def get_manager_name(manager):
 
 def get_player_name(player):
     """Ermittelt den Spielernamen."""
-    direct_name = first_value(
-        player,
-        ["name", "playerName", "pn"],
-    )
-
-    if direct_name:
-        return str(direct_name)
-
     first_name = first_value(
         player,
         ["firstName", "fn", "pfn"],
@@ -148,40 +135,45 @@ def get_player_name(player):
 
     last_name = first_value(
         player,
-        ["lastName", "ln", "pln", "n"],
+        ["lastName", "ln", "pln"],
         "",
     )
 
-    name = f"{first_name} {last_name}".strip()
+    combined = f"{first_name} {last_name}".strip()
 
-    return name or "Unbekannt"
+    if combined:
+        return combined
+
+    single_name = first_value(
+        player,
+        ["name", "n", "playerName", "pn"],
+    )
+
+    if single_name:
+        return str(single_name)
+
+    return "Unbekannt"
 
 
 # ---------------------------------------------------------
-# Werte für Kaderwert und Gewinn
+# Werte für Kaderwert, Kaufpreis und Gewinn
 # ---------------------------------------------------------
 
-# Mögliche Feldnamen für den Kaderwert eines Managers
 TEAM_VALUE_KEYS = [
     "teamValue",
     "tv",
     "squadValue",
     "sv",
     "tvl",
-    "value",
-    "v",
 ]
 
-# Mögliche Feldnamen für den aktuellen Marktwert
 MARKET_VALUE_KEYS = [
     "marketValue",
     "mv",
     "currentValue",
     "cv",
-    "value",
 ]
 
-# Mögliche Feldnamen für den Kaufpreis
 BUY_PRICE_KEYS = [
     "buyPrice",
     "bp",
@@ -189,17 +181,15 @@ BUY_PRICE_KEYS = [
     "pp",
     "boughtFor",
     "bf",
-    "price",
-    "pr",
+    "tp",
+    "prc",
 ]
 
-# Mögliche Feldnamen für einen bereits berechneten Gewinn
 PROFIT_KEYS = [
     "profit",
     "prof",
     "pf",
     "gain",
-    "winnings",
     "sp",
 ]
 
@@ -212,7 +202,7 @@ def get_team_value(manager):
 
 
 def get_market_value(player):
-    """Liest den aktuellen Marktwert eines Spielers."""
+    """Liest den Marktwert eines Spielers."""
     return to_number(
         first_value(player, MARKET_VALUE_KEYS)
     )
@@ -226,12 +216,7 @@ def get_buy_price(player):
 
 
 def get_player_profit(player):
-    """
-    Ermittelt den Gewinn eines Spielers.
-
-    Zuerst wird ein vorhandenes Gewinnfeld verwendet.
-    Sonst wird Marktwert minus Kaufpreis gerechnet.
-    """
+    """Berechnet den Gewinn eines Spielers."""
     direct_profit = to_number(
         first_value(player, PROFIT_KEYS)
     )
@@ -249,7 +234,7 @@ def get_player_profit(player):
 
 
 # ---------------------------------------------------------
-# Erkennung von Listen in API-Antworten
+# Erkennung von Listen
 # ---------------------------------------------------------
 
 def looks_like_league(item):
@@ -282,6 +267,7 @@ def looks_like_manager(item):
         return False
 
     manager_fields = {
+        "unm",
         "userId",
         "uid",
         "ui",
@@ -297,6 +283,7 @@ def looks_like_manager(item):
         "username",
         "budget",
         "shp",
+        "uim",
     }
 
     return bool(
@@ -304,37 +291,17 @@ def looks_like_manager(item):
     )
 
 
-def looks_like_player(item):
-    """Prüft, ob ein Objekt ein Spieler sein könnte."""
+def looks_like_player_with_value(item):
+    """
+    Prüft, ob ein Objekt ein Spieler MIT Marktwert ist.
+
+    Nur solche Spieler sind für die Gewinnrechnung
+    brauchbar.
+    """
     if not isinstance(item, dict):
         return False
 
-    has_name = any(
-        key in item
-        for key in [
-            "firstName",
-            "fn",
-            "lastName",
-            "ln",
-            "n",
-        ]
-    )
-
-    has_player_field = any(
-        key in item
-        for key in [
-            "marketValue",
-            "mv",
-            "position",
-            "pos",
-            "totalPoints",
-            "tp",
-            "buyPrice",
-            "bp",
-        ]
-    )
-
-    return has_name and has_player_field
+    return get_market_value(item) is not None
 
 
 def find_list(value, check_function, keys, depth=0):
@@ -397,12 +364,7 @@ def find_leagues(value):
     return find_list(
         value,
         looks_like_league,
-        [
-            "leagues",
-            "lgs",
-            "ls",
-            "srvl",
-        ],
+        ["leagues", "lgs", "ls", "srvl"],
     )
 
 
@@ -412,30 +374,30 @@ def find_managers(value):
         value,
         looks_like_manager,
         [
-            "users",
             "us",
+            "users",
             "u",
             "managers",
             "ranking",
-            "standings",
             "items",
             "it",
         ],
     )
 
 
-def find_players(value):
-    """Sucht die Spielerliste."""
+def find_players_with_value(value):
+    """Sucht Spieler, die einen Marktwert besitzen."""
     return find_list(
         value,
-        looks_like_player,
+        looks_like_player_with_value,
         [
             "players",
             "p",
-            "items",
             "it",
+            "items",
             "squad",
             "lp",
+            "pl",
         ],
     )
 
@@ -545,7 +507,6 @@ if not st.session_state.get("logged_in"):
                     st.stop()
 
                 st.session_state["api"] = api
-                st.session_state["login_result"] = login_result
                 st.session_state["leagues"] = leagues
                 st.session_state["logged_in"] = True
 
@@ -564,7 +525,6 @@ if not st.session_state.get("logged_in"):
 # ---------------------------------------------------------
 
 api = st.session_state["api"]
-login_result = st.session_state["login_result"]
 leagues = st.session_state["leagues"]
 
 league_index = st.sidebar.selectbox(
@@ -579,77 +539,32 @@ selected_league = leagues[league_index]
 league_id = get_league_id(selected_league)
 league_name = get_league_name(selected_league)
 
-day_number = st.sidebar.number_input(
-    "Spieltag",
-    min_value=1,
-    max_value=34,
-    value=1,
-    step=1,
-)
-
 st.title(f"⚽ {league_name}")
 
 
 # ---------------------------------------------------------
-# Ranking laden (enthält Kaderwerte)
+# Ranking laden
 # ---------------------------------------------------------
 
 managers = []
-ranking_sources = []
-ranking_errors = []
 ranking_path = None
+ranking_errors = []
 
 with st.spinner("Ranking wird geladen …"):
     ranking_sources, ranking_errors = api.get_ranking(
-        league_id,
-        int(day_number),
+        league_id
     )
 
-# Bevorzugt die Quelle nehmen, die Kaderwerte enthält.
 for source in ranking_sources:
     found = find_managers(source["data"])
 
-    if not found:
-        continue
-
-    has_team_value = any(
-        get_team_value(manager) is not None
-        for manager in found
-    )
-
-    if has_team_value:
+    if found:
         managers = found
         ranking_path = source["path"]
         break
 
-    if not managers:
-        managers = found
-        ranking_path = source["path"]
-
-# Falls das Ranking nichts liefert, andere Quellen testen.
 if not managers:
-    other_sources, other_errors = (
-        api.get_league_sources(league_id)
-    )
-
-    ranking_errors.extend(other_errors)
-
-    for source in other_sources:
-        found = find_managers(source["data"])
-
-        if found:
-            managers = found
-            ranking_path = source["path"]
-            ranking_sources.append(source)
-            break
-
-if not managers:
-    managers = find_managers(login_result)
-
-if not managers:
-    st.error(
-        "Es konnten keine Manager geladen werden."
-    )
+    st.error("Es konnten keine Manager geladen werden.")
 
     with st.expander("Fehlerdetails"):
         st.write(ranking_errors)
@@ -658,19 +573,15 @@ if not managers:
 
 
 # ---------------------------------------------------------
-# Liga-Ranking als Tabelle
+# Liga-Ranking nach Kaderwert
 # ---------------------------------------------------------
 
-st.subheader("🏆 Liga-Ranking nach Kaderwert")
+st.subheader("🏆 Kaderwerte der Liga")
 
 ranking_rows = []
-missing_team_value = 0
 
 for manager in managers:
     team_value = get_team_value(manager)
-
-    if team_value is None:
-        missing_team_value += 1
 
     ranking_rows.append(
         {
@@ -692,22 +603,6 @@ st.dataframe(
     use_container_width=True,
     hide_index=True,
 )
-
-if ranking_path:
-    st.caption(f"Datenquelle: {ranking_path}")
-
-# Hinweis, falls der Kaderwert weiterhin fehlt.
-if missing_team_value == len(managers):
-    st.warning(
-        "Der Kaderwert wurde in dieser Antwort nicht "
-        "gefunden. Unten siehst du die echten Feldnamen."
-    )
-
-    with st.expander(
-        "Verfügbare Felder eines Managers"
-    ):
-        st.write(sorted(managers[0].keys()))
-        st.json(safe_structure(managers[0]))
 
 
 # ---------------------------------------------------------
@@ -732,40 +627,45 @@ selected_manager_name = get_manager_name(
 
 
 # ---------------------------------------------------------
-# Kader laden
+# Kader suchen
 # ---------------------------------------------------------
 
 players = []
-players_error = None
-player_result = None
+squad_path = None
+squad_sources = []
+squad_errors = []
 
-try:
-    with st.spinner("Kader wird geladen …"):
-        player_result = api.get_user_players(
+with st.spinner("Kader wird gesucht …"):
+    squad_sources, squad_errors = (
+        api.get_squad_candidates(
             league_id,
             selected_user_id,
-            day_number=int(day_number),
         )
+    )
 
-    players = find_players(player_result)
+# Bevorzugt die Quelle mit den meisten Spielern nehmen.
+best_count = 0
 
-except Exception as error:
-    players_error = str(error)
+for source in squad_sources:
+    found = find_players_with_value(source["data"])
+
+    if len(found) > best_count:
+        players = found
+        squad_path = source["path"]
+        best_count = len(found)
 
 
 # ---------------------------------------------------------
-# Kennzahlen des ausgewählten Managers
+# Kennzahlen
 # ---------------------------------------------------------
 
 st.subheader(
     f"📊 Übersicht: {selected_manager_name}"
 )
 
-# Kaderwert aus dem Ranking
 team_value = get_team_value(selected_manager)
 
-# Ersatzwert: Summe der Marktwerte im Kader
-calculated_team_value = None
+calculated_value = None
 
 if players:
     values = [
@@ -779,11 +679,10 @@ if players:
     ]
 
     if values:
-        calculated_team_value = sum(values)
+        calculated_value = sum(values)
 
-# Gewinn über alle Spieler
 total_profit = None
-players_with_profit = 0
+profit_count = 0
 
 if players:
     profits = []
@@ -793,52 +692,41 @@ if players:
 
         if profit is not None:
             profits.append(profit)
-            players_with_profit += 1
+            profit_count += 1
 
     if profits:
         total_profit = sum(profits)
 
-overview_col1, overview_col2, overview_col3 = (
-    st.columns(3)
-)
+col1, col2, col3 = st.columns(3)
 
-overview_col1.metric(
-    "Kaderwert laut Ranking",
+col1.metric(
+    "Kaderwert",
     format_currency(team_value),
 )
 
-overview_col2.metric(
-    "Kaderwert berechnet",
-    format_currency(calculated_team_value),
+col2.metric(
+    "Summe Marktwerte",
+    format_currency(calculated_value),
 )
 
-overview_col3.metric(
+col3.metric(
     "Gewinn gesamt",
     format_signed_currency(total_profit),
 )
 
-if players and total_profit is not None:
-    st.caption(
-        f"Gewinn berechnet aus {players_with_profit} "
-        f"von {len(players)} Spielern."
-    )
-
 
 # ---------------------------------------------------------
-# Kadertabelle mit Gewinn
+# Kadertabelle
 # ---------------------------------------------------------
 
 st.subheader(
     f"📋 Kader von {selected_manager_name}"
 )
 
-if players_error:
-    st.error(
-        f"Kader konnte nicht geladen werden: "
-        f"{players_error}"
-    )
+if players:
+    if squad_path:
+        st.caption(f"Datenquelle: {squad_path}")
 
-elif players:
     positions = {
         1: "Torwart",
         2: "Abwehr",
@@ -870,7 +758,9 @@ elif players:
             {
                 "Spieler": get_player_name(player),
                 "Position": position_name,
-                "Kaufpreis": format_currency(buy_price),
+                "Kaufpreis": format_currency(
+                    buy_price
+                ),
                 "Marktwert": format_currency(
                     market_value
                 ),
@@ -898,30 +788,57 @@ elif players:
         hide_index=True,
     )
 
-    # Hinweis, falls Kaufpreise fehlen.
-    if players_with_profit == 0:
+    if profit_count == 0:
         st.warning(
-            "Es wurde kein Kaufpreis gefunden. "
-            "Unten stehen die echten Feldnamen eines "
-            "Spielers, damit der richtige Wert "
-            "eingebaut werden kann."
+            "Marktwerte sind da, aber kein Kaufpreis. "
+            "Unten stehen die echten Feldnamen."
         )
 
         with st.expander(
-            "Verfügbare Felder eines Spielers"
+            "Felder eines Spielers"
         ):
             st.write(sorted(players[0].keys()))
             st.json(safe_structure(players[0]))
 
 else:
-    st.info(
-        "Es wurden keine Spieler erkannt."
+    st.warning(
+        "Es wurde noch kein Kader mit Marktwerten "
+        "gefunden."
     )
 
-    if player_result is not None:
-        with st.expander(
-            "Sichere Struktur anzeigen"
-        ):
-            st.json(
-                safe_structure(player_result)
+
+# ---------------------------------------------------------
+# Diagnose der getesteten Endpunkte
+# ---------------------------------------------------------
+
+st.markdown("---")
+
+with st.expander(
+    "🔎 Welche Kader-Endpunkte funktionieren?"
+):
+    if squad_sources:
+        st.write("**Erfolgreiche Endpunkte:**")
+
+        for source in squad_sources:
+            found = find_players_with_value(
+                source["data"]
             )
+
+            st.write(
+                f"- `{source['path']}` "
+                f"→ {len(found)} Spieler mit Marktwert"
+            )
+
+        st.write("**Strukturen:**")
+
+        for source in squad_sources:
+            with st.expander(source["path"]):
+                st.json(
+                    safe_structure(source["data"])
+                )
+
+    else:
+        st.write("Kein Endpunkt hat geantwortet.")
+
+    st.write("**Fehler:**")
+    st.write(squad_errors)
