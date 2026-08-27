@@ -357,7 +357,6 @@ def is_in_lineup(player):
 # Spieltag ermitteln
 # ---------------------------------------------------------
 
-# Feldnamen, unter denen ein Spieltagsdatum liegen koennte
 MATCHDAY_DATE_KEYS = [
     "dt",
     "date",
@@ -421,8 +420,7 @@ def find_days_to_matchday(api, league_id):
     """
     Sucht das naechste Spieltagsdatum in der API.
 
-    Rueckgabe: (tage, quelle). Beide None, wenn
-    nichts gefunden wurde.
+    Rueckgabe: (tage, quelle).
     """
     paths = [
         f"/v4/leagues/{league_id}/matchdays",
@@ -909,21 +907,24 @@ def compute_stats(players):
 
 
 def compute_budget(stats, total_profit, start_budget,
-                   days_to_matchday):
+                   days_to_matchday, real_balance=None):
     """
-    Schaetzt das Budget eines Managers.
+    Ermittelt das Budget eines Managers.
 
-    Kontostand   = Startbudget + Gewinn gesamt
-                   minus Kaderwert gesamt
-    Nach Verkauf = Kontostand plus Marktwert Trading
-    Am Spieltag  = Nach Verkauf plus Trend Trading
-                   mal Tage bis Spieltag
+    Wenn real_balance gesetzt ist, wird dieser echte
+    Kontostand genutzt. Sonst wird geschaetzt:
+    Startbudget plus Gewinn gesamt minus Kaderwert.
     """
-    balance = (
-        start_budget
-        + total_profit
-        - stats["squad_value"]
-    )
+    if real_balance is not None:
+        balance = real_balance
+        is_real = True
+    else:
+        balance = (
+            start_budget
+            + total_profit
+            - stats["squad_value"]
+        )
+        is_real = False
 
     after_sale = balance + stats["trading_value"]
 
@@ -936,6 +937,7 @@ def compute_budget(stats, total_profit, start_budget,
         "balance": balance,
         "after_sale": after_sale,
         "at_matchday": at_matchday,
+        "is_real": is_real,
     }
 
 
@@ -963,6 +965,25 @@ def load_realized_profit(api, league_id, manager_id):
 
     except Exception:
         return None, None
+
+
+def load_real_budget(api, league_id):
+    """Liest den echten Kontostand des eigenen Accounts."""
+    try:
+        return api.get_budget(league_id)
+
+    except Exception:
+        return None, None
+
+
+def is_own_manager(api, manager_id):
+    """Prüft, ob ein Manager der angemeldete Nutzer ist."""
+    own_id = getattr(api, "own_user_id", None)
+
+    if not own_id:
+        return False
+
+    return str(own_id) == str(manager_id)
 
 
 # ---------------------------------------------------------
@@ -995,12 +1016,7 @@ def color_by_value(value):
 
 
 def style_player_table(frame):
-    """
-    Formatiert und färbt die Kadertabelle.
-
-    Die Zahlen bleiben Zahlen, damit korrekt
-    sortiert werden kann.
-    """
+    """Formatiert und färbt die Kadertabelle."""
 
     def color_row(row):
         """Graut Zeilen von Trading Spielern aus."""
@@ -1111,13 +1127,7 @@ def style_trades_table(frame):
 # ---------------------------------------------------------
 
 def kpi_block(title, entries, compact=False):
-    """
-    Zeigt einen KPI-Block mit Überschrift und Spalten.
-
-    entries ist eine Liste aus Einträgen:
-    (Beschriftung, Hauptwert, Zusatzzeilen, Farbe)
-    Bei compact entfallen die Zusatzzeilen.
-    """
+    """Zeigt einen KPI-Block mit Überschrift und Spalten."""
     colors = {
         "neutral": COLOR_NEUTRAL,
         "plus": COLOR_POSITIVE,
@@ -1180,16 +1190,25 @@ def tone_of(value):
 
 
 def build_budget_kpis(budget, stats, start_budget,
-                      days_to_matchday, days_source):
+                      days_to_matchday, days_source,
+                      budget_source):
     """Baut die Einträge für den Budget-Block."""
+    if budget["is_real"]:
+        balance_notes = [
+            "echter Kontostand aus der API",
+            str(budget_source),
+        ]
+    else:
+        balance_notes = [
+            f"Start: {format_currency(start_budget)}",
+            "geschätzt: plus Gewinn, minus Kaderwert",
+        ]
+
     return [
         (
             "Kontostand",
             format_signed_currency(budget["balance"]),
-            [
-                f"Start: {format_currency(start_budget)}",
-                "plus Gewinn, minus Kaderwert",
-            ],
+            balance_notes,
             tone_of(budget["balance"]),
         ),
         (
@@ -1229,7 +1248,6 @@ st.set_page_config(
 )
 
 
-# Gestaltung der Reiter und der Handyansicht
 st.markdown(
     """
     <style>
@@ -1468,10 +1486,33 @@ start_budget_mio = st.sidebar.number_input(
     max_value=500.0,
     value=DEFAULT_START_BUDGET / 1_000_000,
     step=5.0,
-    help="Betrag, mit dem jeder Manager gestartet ist.",
+    help="Nur für die Schätzung fremder Manager.",
 )
 
 start_budget = start_budget_mio * 1_000_000
+
+# Echter Kontostand des eigenen Accounts
+budget_key = f"own_budget_{league_id}"
+
+if budget_key not in st.session_state:
+    with st.spinner("Eigener Kontostand wird gelesen …"):
+        st.session_state[budget_key] = load_real_budget(
+            api,
+            league_id,
+        )
+
+own_budget, own_budget_source = st.session_state[budget_key]
+
+if own_budget is not None:
+    st.sidebar.caption(
+        f"Eigener Kontostand: "
+        f"{format_currency(own_budget)}"
+    )
+else:
+    st.sidebar.caption(
+        "Eigener Kontostand nicht gefunden, "
+        "es wird geschätzt."
+    )
 
 # Tage bis zum Spieltag aus der API suchen
 matchday_key = f"matchday_days_{league_id}"
@@ -1565,12 +1606,11 @@ if view == "Liga":
 
     st.caption(
         "Ein Klick auf eine Zeile öffnet die "
-        "Detailansicht des Managers."
+        "Detailansicht des Managers. "
+        "Der eigene Account ist mit einem Punkt markiert."
     )
 
-    # Neuer Schluessel, damit alte Textwerte
-    # aus frueheren Versionen verworfen werden.
-    cache_key = f"league_rows_v3_{league_id}"
+    cache_key = f"league_rows_v4_{league_id}"
 
     if st.button("Daten neu laden"):
         st.session_state.pop(cache_key, None)
@@ -1603,9 +1643,12 @@ if view == "Liga":
 
             realized_value = realized or 0.0
 
+            own = is_own_manager(api, manager_id)
+
             rows.append(
                 {
                     "Manager": manager_name,
+                    "Ich": own,
                     "Start 11": stats["lineup_value"],
                     "Trading": stats["trading_value"],
                     "Kaderwert": stats["squad_value"],
@@ -1643,12 +1686,19 @@ if view == "Liga":
             columns=["_sort"]
         )
 
-    # Budget je Manager ergaenzen
+    # Geschaetzter Kontostand
     league_frame["Kontostand"] = (
         start_budget
         + league_frame["Gewinn gesamt"]
         - league_frame["Kaderwert"]
     )
+
+    # Fuer den eigenen Account den echten Wert einsetzen
+    if own_budget is not None and "Ich" in league_frame.columns:
+        league_frame.loc[
+            league_frame["Ich"],
+            "Kontostand",
+        ] = own_budget
 
     league_frame["Nach Verkauf"] = (
         league_frame["Kontostand"]
@@ -1660,6 +1710,18 @@ if view == "Liga":
         + league_frame["Trend Trading"]
         * days_to_matchday
     )
+
+    # Eigenen Namen markieren
+    if "Ich" in league_frame.columns:
+        league_frame["Manager"] = [
+            f"● {name}" if own else name
+            for name, own in zip(
+                league_frame["Manager"],
+                league_frame["Ich"],
+            )
+        ]
+
+        league_frame = league_frame.drop(columns=["Ich"])
 
     if compact:
         visible_columns = [
@@ -1700,7 +1762,10 @@ if view == "Liga":
         compact=compact,
     )
 
-    sorted_names = league_frame["Manager"].tolist()
+    sorted_names = [
+        name.replace("● ", "")
+        for name in league_frame["Manager"].tolist()
+    ]
 
     selection = st.dataframe(
         style_league_table(league_frame),
@@ -1712,11 +1777,19 @@ if view == "Liga":
         key="league_table",
     )
 
-    st.caption(
-        f"Budget geschätzt mit "
-        f"{format_currency(start_budget)} Startbudget "
-        f"und {days_to_matchday} Tagen bis zum Spieltag."
-    )
+    if own_budget is not None:
+        st.caption(
+            f"Eigener Kontostand echt aus der API, "
+            f"alle anderen geschätzt mit "
+            f"{format_currency(start_budget)} Startbudget "
+            f"und {days_to_matchday} Tagen bis zum Spieltag."
+        )
+    else:
+        st.caption(
+            f"Alle Kontostände geschätzt mit "
+            f"{format_currency(start_budget)} Startbudget "
+            f"und {days_to_matchday} Tagen bis zum Spieltag."
+        )
 
     selected_rows = []
 
@@ -1762,8 +1835,13 @@ manager_index = st.selectbox(
     "Manager auswählen",
     range(len(managers)),
     index=default_index,
-    format_func=lambda index: get_manager_name(
-        managers[index]
+    format_func=lambda index: (
+        f"● {get_manager_name(managers[index])}"
+        if is_own_manager(
+            api,
+            get_manager_id(managers[index]),
+        )
+        else get_manager_name(managers[index])
     ),
 )
 
@@ -1777,6 +1855,8 @@ selected_manager_id = get_manager_id(selected_manager)
 selected_manager_name = get_manager_name(
     selected_manager
 )
+
+viewing_self = is_own_manager(api, selected_manager_id)
 
 
 # ---------------------------------------------------------
@@ -1811,9 +1891,6 @@ if show_realized and players:
             selected_manager_id,
         )
 
-# Realisierter Gewinn direkt aus dem Feld prft.
-# Wenn prft gefunden wird, hat es Vorrang vor dem Feed.
-
 prft_value = None
 prft_source = None
 
@@ -1847,11 +1924,15 @@ if realized_profit is not None:
         stats["profit_in_club"] + realized_profit
     )
 
+# Beim eigenen Account den echten Kontostand nutzen
+real_balance = own_budget if viewing_self else None
+
 budget = compute_budget(
     stats,
     total_profit,
     start_budget,
     days_to_matchday,
+    real_balance=real_balance,
 )
 
 
@@ -1864,8 +1945,10 @@ open_kpis = kpis_expanded or st.session_state.get(
     False,
 )
 
+title_marker = " ●" if viewing_self else ""
+
 with st.expander(
-    f"Kennzahlen: {selected_manager_name}",
+    f"Kennzahlen: {selected_manager_name}{title_marker}",
     expanded=open_kpis,
 ):
     kpi_block(
@@ -1965,14 +2048,21 @@ with st.expander(
         compact=compact,
     )
 
+    budget_title = (
+        "Budget echt"
+        if budget["is_real"]
+        else "Budget geschätzt"
+    )
+
     kpi_block(
-        "Budget geschätzt",
+        budget_title,
         build_budget_kpis(
             budget,
             stats,
             start_budget,
             days_to_matchday,
             days_source,
+            own_budget_source,
         ),
         compact=compact,
     )
@@ -2156,8 +2246,8 @@ with st.expander("Alle Daten zu einem Spieler"):
 if not compact:
     with st.expander("Alle Daten zu diesem Manager"):
         st.write(
-            "Hier werden alle bekannten Manager-Endpunkte "
-            "getestet und ihr Inhalt angezeigt."
+            "Eigene Benutzer-ID: "
+            + str(getattr(api, "own_user_id", "unbekannt"))
         )
 
         if st.button("Manager-Daten laden"):
