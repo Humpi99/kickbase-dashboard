@@ -26,71 +26,55 @@ class KickbaseAPI:
             headers["Authorization"] = f"Bearer {self.token}"
         return headers
 
-    def login(self, email, password):
-        """
-        Meldet sich bei Kickbase an.
-        Probiert mehrere bekannte Login-Endpunkte.
-        """
-        # Verschiedene bekannte Pfade versuchen
-        endpoints = [
-            "/user/login",
-            "/v4/user/login",
-            "/v4/user/token",
-        ]
+def login(self, email, password):
+    """Meldet sich über die aktuelle Kickbase-v4-API an."""
 
-        data = {
-            "email": email,
-            "password": password,
-            "ext": False
-        }
+    url = f"{self.base_url}/v4/user/login"
 
-        headers = {
-            "Accept": "application/json",
-            "Content-Type": "application/json"
-        }
+    data = {
+        "em": email,
+        "pass": password,
+        "loy": False,
+        "rep": {}
+    }
 
-        last_status = None
-        for endpoint in endpoints:
-            url = f"{self.base_url}{endpoint}"
-            try:
-                response = self.session.post(url, json=data, headers=headers)
-                last_status = response.status_code
+    headers = {
+        "Accept": "application/json",
+        "Content-Type": "application/json"
+    }
 
-                if response.status_code == 200:
-                    result = response.json()
+    try:
+        response = self.session.post(
+            url,
+            json=data,
+            headers=headers,
+            timeout=20
+        )
+    except requests.exceptions.RequestException as error:
+        raise Exception(f"Kickbase ist nicht erreichbar: {error}")
 
-                    # Token aus Response JSON holen
-                    self.token = result.get("token") or result.get("tkn")
+    if response.status_code == 200:
+        result = response.json()
 
-                    # Oder Token aus Set-Cookie Header holen
-                    if not self.token:
-                        cookies = response.cookies
-                        if "kkstrauth" in cookies:
-                            self.token = cookies["kkstrauth"]
+        # In der aktuellen v4-Antwort heißt der Token „tkn“.
+        self.token = result.get("tkn") or result.get("token")
 
-                    # Auch aus dem Set-Cookie Header direkt
-                    if not self.token:
-                        set_cookie = response.headers.get("Set-Cookie", "")
-                        if "kkstrauth=" in set_cookie:
-                            self.token = set_cookie.split("kkstrauth=")[1].split(";")[0]
+        if not self.token:
+            raise Exception(
+                "Login war erfolgreich, aber die Antwort enthält keinen Token."
+            )
 
-                    if self.token:
-                        return result
-                    else:
-                        # Kein Token gefunden, aber 200 OK - trotzdem nutzen
-                        return result
+        return result
 
-                elif response.status_code == 401:
-                    raise Exception("❌ Login fehlgeschlagen: E-Mail oder Passwort falsch.")
+    if response.status_code in (400, 401, 403):
+        raise Exception(
+            "Login abgelehnt. Bitte E-Mail und Passwort prüfen."
+        )
 
-            except requests.exceptions.ConnectionError:
-                continue
-            except Exception as e:
-                if "fehlgeschlagen" in str(e):
-                    raise e
-                continue
-
-        raise Exception(f"❌ Login fehlgeschlagen - kein Endpunkt erreichbar (letzter Status: {last_status})")
+    raise Exception(
+        f"Login fehlgeschlagen (Status {response.status_code}): "
+        f"{response.text[:300]}"
+    )
 
     def _get(self, path):
         """Führt einen GET-Request aus."""
