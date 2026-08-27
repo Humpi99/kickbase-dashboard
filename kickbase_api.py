@@ -1,225 +1,171 @@
-"""
-Client für die inoffizielle Kickbase-v4-API.
-"""
-
 import requests
+
+BASE_URL = "https://api.kickbase.com"
 
 
 class KickbaseAPI:
-    """Kommunikation mit der Kickbase API."""
-
     def __init__(self):
-        self.base_url = "https://api.kickbase.com"
         self.token = None
-        self.session = requests.Session()
+        self.login_data = None
 
+    # ------------------------------------------------------------------
+    # Hilfsfunktionen
+    # ------------------------------------------------------------------
     def _headers(self):
-        """Erstellt die Header für Kickbase-Anfragen."""
-        headers = {
-            "Accept": "application/json",
-            "Content-Type": "application/json",
-        }
-
+        headers = {"Content-Type": "application/json"}
         if self.token:
-            headers["Authorization"] = f"Bearer {self.token}"
-
+            headers["Authorization"] = "Bearer " + self.token
         return headers
 
+    def _get(self, path):
+        """GET-Anfrage. Gibt bei Fehler None zurueck."""
+        try:
+            response = requests.get(BASE_URL + path, headers=self._headers(), timeout=20)
+        except Exception:
+            return None
+        if response.status_code != 200:
+            return None
+        try:
+            return response.json()
+        except Exception:
+            return None
+
+    # ------------------------------------------------------------------
+    # Login
+    # ------------------------------------------------------------------
     def login(self, email, password):
-        """Meldet den Benutzer bei Kickbase an."""
-        url = f"{self.base_url}/v4/user/login"
+        body = {"em": email, "pass": password, "loy": False, "rep": {}}
+        response = requests.post(BASE_URL + "/v4/user/login", json=body, timeout=20)
+        if response.status_code != 200:
+            raise Exception("Login fehlgeschlagen (Status " + str(response.status_code) + ")")
+        data = response.json()
+        token = data.get("tkn")
+        if not token:
+            raise Exception("Kein Token in der Antwort gefunden")
+        self.token = token
+        self.login_data = data
+        return data
 
-        body = {
-            "em": email.strip(),
-            "pass": password,
-            "loy": False,
-            "rep": {},
-        }
+    # ------------------------------------------------------------------
+    # Ligen
+    # ------------------------------------------------------------------
+    def get_leagues(self):
+        """Sucht rekursiv nach Liga-Objekten in der Login-Antwort."""
+        gefunden = []
 
-        try:
-            response = self.session.post(
-                url,
-                json=body,
-                headers={
-                    "Accept": "application/json",
-                    "Content-Type": "application/json",
-                },
-                timeout=30,
-            )
-        except requests.exceptions.RequestException as error:
-            raise Exception(
-                f"Kickbase ist nicht erreichbar: {error}"
-            ) from error
+        def suche(objekt):
+            if isinstance(objekt, dict):
+                hat_id = "i" in objekt or "id" in objekt
+                hat_name = "n" in objekt or "name" in objekt
+                if hat_id and hat_name:
+                    liga_id = str(objekt.get("i", objekt.get("id")))
+                    liga_name = objekt.get("n", objekt.get("name"))
+                    if liga_id and liga_name and len(liga_id) > 4:
+                        gefunden.append({"id": liga_id, "name": liga_name})
+                for wert in objekt.values():
+                    suche(wert)
+            elif isinstance(objekt, list):
+                for eintrag in objekt:
+                    suche(eintrag)
 
-        if response.status_code == 200:
-            try:
-                result = response.json()
-            except ValueError as error:
-                raise Exception(
-                    "Kickbase hat keine gültige Antwort gesendet."
-                ) from error
+        suche(self.login_data)
 
-            self.token = (
-                result.get("tkn")
-                or result.get("token")
-                or result.get("accessToken")
-            )
+        # Duplikate entfernen
+        eindeutig = {}
+        for liga in gefunden:
+            eindeutig[liga["id"]] = liga
+        return list(eindeutig.values())
 
-            if not self.token:
-                raise Exception(
-                    "Anmeldung erfolgreich, aber kein Token gefunden."
-                )
+    # ------------------------------------------------------------------
+    # Manager
+    # ------------------------------------------------------------------
+    def get_managers(self, league_id):
+        daten = self._get("/v4/leagues/" + str(league_id) + "/ranking")
+        if not daten:
+            return []
+        manager = []
+        for eintrag in daten.get("us", []):
+            manager.append({
+                "id": str(eintrag.get("i")),
+                "name": eintrag.get("n"),
+                "punkte": eintrag.get("sp", 0),
+                "teamwert": eintrag.get("tv", 0),
+            })
+        return manager
 
-            return result
+    # ------------------------------------------------------------------
+    # Kader
+    # ------------------------------------------------------------------
+    def get_squad(self, league_id, manager_id):
+        pfad = ("/v4/leagues/" + str(league_id) +
+                "/managers/" + str(manager_id) + "/squad")
+        daten = self._get(pfad)
+        if not daten:
+            return []
+        return daten.get("it", daten.get("players", []))
 
-        if response.status_code in (400, 401, 403):
-            raise Exception(
-                "Anmeldung abgelehnt. Bitte E-Mail und Passwort prüfen."
-            )
+    # ------------------------------------------------------------------
+    # Realisierter Gewinn ueber das Feld prft
+    # ------------------------------------------------------------------
+    def get_realized_profit(self, league_id, manager_id):
+        """Sucht das Feld prft in den Manager-Endpunkten.
 
-        raise Exception(
-            f"Anmeldung fehlgeschlagen. Status: {response.status_code}"
-        )
-
-    def get(self, path, params=None):
-        """Führt eine authentifizierte GET-Anfrage aus."""
-        if not self.token:
-            raise Exception("Du bist nicht angemeldet.")
-
-        url = f"{self.base_url}{path}"
-
-        try:
-            response = self.session.get(
-                url,
-                params=params,
-                headers=self._headers(),
-                timeout=30,
-            )
-        except requests.exceptions.RequestException as error:
-            raise Exception(
-                f"Kickbase-Anfrage fehlgeschlagen: {error}"
-            ) from error
-
-        if response.status_code == 200:
-            try:
-                return response.json()
-            except ValueError as error:
-                raise Exception(
-                    f"{path}: keine gültige JSON-Antwort"
-                ) from error
-
-        if response.status_code == 401:
-            raise Exception(
-                "Anmeldung abgelaufen. Bitte neu anmelden."
-            )
-
-        raise Exception(
-            f"{path}: Status {response.status_code}"
-        )
-
-    def try_paths(self, paths, params=None):
-        """Testet mehrere Endpunkte und sammelt alle Treffer."""
-        results = []
-        errors = []
-
-        for path in paths:
-            try:
-                data = self.get(path, params=params)
-
-                results.append(
-                    {
-                        "path": path,
-                        "data": data,
-                    }
-                )
-            except Exception as error:
-                errors.append(str(error))
-
-        return results, errors
-
-    def get_ranking(self, league_id):
-        """Lädt das Liga-Ranking mit den Managern."""
-        paths = [
-            f"/v4/leagues/{league_id}/ranking",
+        Rueckgabe: (wert, quelle). Wert ist None, wenn nichts gefunden wurde.
+        """
+        pfade = [
+            "/v4/leagues/{L}/managers/{M}/dashboard",
+            "/v4/leagues/{L}/managers/{M}/profile",
+            "/v4/leagues/{L}/managers/{M}/performance",
+            "/v4/leagues/{L}/managers/{M}",
+            "/v4/leagues/{L}/users/{M}/dashboard",
+            "/v4/leagues/{L}/users/{M}/profile",
+            "/v4/leagues/{L}/users/{M}/performance",
+            "/v4/leagues/{L}/managers/{M}/squad",
         ]
+        for vorlage in pfade:
+            pfad = vorlage.replace("{L}", str(league_id)).replace("{M}", str(manager_id))
+            daten = self._get(pfad)
+            if daten is None:
+                continue
+            wert = self._finde_feld(daten, "prft")
+            if wert is not None:
+                return wert, pfad
+        return None, None
 
-        return self.try_paths(paths)
+    def _finde_feld(self, objekt, feldname):
+        """Sucht rekursiv nach einem Feld und gibt den ersten Zahlenwert zurueck."""
+        if isinstance(objekt, dict):
+            if feldname in objekt:
+                wert = objekt[feldname]
+                if isinstance(wert, (int, float)):
+                    return wert
+            for wert in objekt.values():
+                treffer = self._finde_feld(wert, feldname)
+                if treffer is not None:
+                    return treffer
+        elif isinstance(objekt, list):
+            for eintrag in objekt:
+                treffer = self._finde_feld(eintrag, feldname)
+                if treffer is not None:
+                    return treffer
+        return None
 
-    def get_manager_squad(self, league_id, manager_id):
-        """Lädt den Kader eines bestimmten Managers."""
-        path = (
-            f"/v4/leagues/{league_id}"
-            f"/managers/{manager_id}/squad"
-        )
-
-        return self.get(path)
-
+    # ------------------------------------------------------------------
+    # Exploration (zur Kontrolle)
+    # ------------------------------------------------------------------
     def explore_manager(self, league_id, manager_id):
-        """
-        Probiert alle bekannten Manager-Endpunkte durch.
-
-        Dient dazu, verfügbare Informationen zu finden.
-        """
-        base = f"/v4/leagues/{league_id}/managers/{manager_id}"
-
-        paths = [
-            base,
-            f"{base}/squad",
-            f"{base}/performance",
-            f"{base}/dashboard",
-            f"{base}/profile",
-            f"{base}/stats",
-            f"{base}/transfers",
-            f"{base}/activities",
-            f"{base}/activitiesFeed",
-            f"{base}/feed",
-            f"{base}/teamcenter",
-            f"{base}/lineup",
-            f"{base}/budget",
-            f"{base}/matchdays",
-            f"{base}/season",
-            f"{base}/points",
-            f"{base}/history",
-            f"{base}/achievements",
-            f"/v4/leagues/{league_id}/users/{manager_id}",
-            f"/v4/leagues/{league_id}/users/{manager_id}/profile",
-            f"/v4/leagues/{league_id}/users/{manager_id}/stats",
+        endpunkte = [
+            "squad", "performance", "dashboard", "profile", "stats",
+            "transfers", "activities", "feed", "teamcenter", "lineup",
+            "budget", "matchdays", "season", "points", "history",
+            "achievements",
         ]
-
-        return self.try_paths(paths)
-
-    def get_manager_transfers(self, league_id, manager_id):
-        """Lädt die Transferhistorie eines Managers."""
-        paths = [
-            f"/v4/leagues/{league_id}"
-            f"/managers/{manager_id}/transfers",
-            f"/v4/leagues/{league_id}"
-            f"/managers/{manager_id}/activities",
-            f"/v4/leagues/{league_id}"
-            f"/managers/{manager_id}/performance",
-            f"/v4/leagues/{league_id}"
-            f"/managers/{manager_id}/dashboard",
-        ]
-
-        return self.try_paths(paths)
-
-    def get_league_feed(self, league_id, start=0):
-        """Lädt eine Seite des Liga-Feeds."""
-        paths = [
-            f"/v4/leagues/{league_id}/activitiesFeed",
-            f"/v4/leagues/{league_id}/activities",
-            f"/v4/leagues/{league_id}/feed",
-        ]
-
-        return self.try_paths(
-            paths,
-            params={"start": start, "max": 25},
-        )
-
-    def get_market(self, league_id):
-        """Lädt den Transfermarkt der Liga."""
-        paths = [
-            f"/v4/leagues/{league_id}/market",
-        ]
-
-        return self.try_paths(paths)
+        ergebnis = {}
+        for endpunkt in endpunkte:
+            for basis in ["managers", "users"]:
+                pfad = ("/v4/leagues/" + str(league_id) + "/" + basis + "/" +
+                        str(manager_id) + "/" + endpunkt)
+                daten = self._get(pfad)
+                if daten is not None:
+                    ergebnis[pfad] = daten
+        return ergebnis
