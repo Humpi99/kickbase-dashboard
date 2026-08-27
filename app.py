@@ -13,10 +13,7 @@ from kickbase_api import KickbaseAPI
 # ---------------------------------------------------------
 
 def first_value(data, keys, default=None):
-    """
-    Gibt den ersten vorhandenen Wert aus einer Liste
-    möglicher API-Feldnamen zurück.
-    """
+    """Liest den ersten vorhandenen Wert aus mehreren Feldnamen."""
     if not isinstance(data, dict):
         return default
 
@@ -28,7 +25,7 @@ def first_value(data, keys, default=None):
 
 
 def first_list(data, keys):
-    """Sucht in einem Dictionary nach der ersten passenden Liste."""
+    """Liest die erste vorhandene Liste aus mehreren Feldnamen."""
     if not isinstance(data, dict):
         return []
 
@@ -42,21 +39,23 @@ def first_list(data, keys):
 
 
 def format_currency(value):
-    """Formatiert einen Betrag als Millionen Euro."""
+    """Formatiert einen Betrag in Millionen Euro."""
     if value is None or value == "":
         return "—"
 
     try:
-        amount = float(value)
-        return f"{amount / 1_000_000:,.2f} Mio. €".replace(
-            ",", "X"
-        ).replace(".", ",").replace("X", ".")
+        number = float(value)
+        formatted = f"{number / 1_000_000:,.2f}"
+        formatted = formatted.replace(",", "X")
+        formatted = formatted.replace(".", ",")
+        formatted = formatted.replace("X", ".")
+        return f"{formatted} Mio. €"
     except (TypeError, ValueError):
         return "—"
 
 
 def format_number(value):
-    """Formatiert eine Zahl mit deutschen Tausenderpunkten."""
+    """Formatiert eine normale Zahl."""
     if value is None or value == "":
         return "—"
 
@@ -67,7 +66,7 @@ def format_number(value):
 
 
 def map_position(position):
-    """Übersetzt Kickbase-Positionsnummern."""
+    """Übersetzt eine Positionsnummer."""
     positions = {
         1: "Torwart",
         2: "Abwehr",
@@ -82,7 +81,7 @@ def map_position(position):
 
 
 def get_player_name(player):
-    """Ermittelt den Spielernamen aus langen oder kurzen Feldnamen."""
+    """Ermittelt den Namen eines Spielers."""
     if not isinstance(player, dict):
         return "Unbekannt"
 
@@ -105,8 +104,8 @@ def get_player_name(player):
         "",
     )
 
-    name = f"{first_name} {last_name}".strip()
-    return name or "Unbekannt"
+    full_name = f"{first_name} {last_name}".strip()
+    return full_name or "Unbekannt"
 
 
 def get_manager_name(manager):
@@ -114,7 +113,7 @@ def get_manager_name(manager):
     return str(
         first_value(
             manager,
-            ["name", "n", "username", "un"],
+            ["name", "n", "username", "un", "teamName", "tn"],
             "Unbekannter Manager",
         )
     )
@@ -122,13 +121,12 @@ def get_manager_name(manager):
 
 def get_manager_id(manager):
     """Ermittelt die ID eines Managers."""
-    return str(
-        first_value(
-            manager,
-            ["id", "i", "userId", "uid"],
-            "",
-        )
+    value = first_value(
+        manager,
+        ["id", "i", "userId", "uid", "ui"],
+        "",
     )
+    return str(value) if value is not None else ""
 
 
 def get_league_name(league):
@@ -144,150 +142,257 @@ def get_league_name(league):
 
 def get_league_id(league):
     """Ermittelt die ID einer Liga."""
-    return str(
-        first_value(
-            league,
-            ["id", "i", "leagueId", "li"],
-            "",
-        )
+    value = first_value(
+        league,
+        ["id", "i", "leagueId", "li"],
+        "",
+    )
+    return str(value) if value is not None else ""
+
+
+def looks_like_league(item):
+    """Prüft, ob ein Objekt wahrscheinlich eine Liga ist."""
+    if not isinstance(item, dict):
+        return False
+
+    has_id = any(
+        key in item
+        for key in ["id", "i", "leagueId", "li"]
     )
 
-
-def extract_user(login_result):
-    """Sucht das User-Objekt in der Login-Antwort."""
-    user = first_value(
-        login_result,
-        ["user", "u", "usr"],
-        {},
+    has_name = any(
+        key in item
+        for key in ["name", "n", "leagueName", "ln"]
     )
 
-    return user if isinstance(user, dict) else {}
+    return has_id and has_name
 
 
-def extract_leagues(login_result):
-    """Sucht die Liga-Liste in der Login-Antwort."""
-    leagues = first_list(
-        login_result,
-        ["leagues", "lgs", "ls", "leaguesData"],
-    )
+def find_league_list(value, depth=0):
+    """
+    Durchsucht die komplette Login-Antwort rekursiv
+    nach einer wahrscheinlichen Liga-Liste.
+    """
+    if depth > 6:
+        return []
 
-    if leagues:
-        return leagues
+    if isinstance(value, list):
+        if value and all(
+            isinstance(item, dict) for item in value
+        ):
+            probable_leagues = [
+                item for item in value
+                if looks_like_league(item)
+            ]
 
-    user = extract_user(login_result)
+            if probable_leagues:
+                return probable_leagues
 
-    return first_list(
-        user,
-        ["leagues", "lgs", "ls"],
-    )
+        for item in value:
+            result = find_league_list(item, depth + 1)
+
+            if result:
+                return result
+
+    if isinstance(value, dict):
+        preferred_keys = [
+            "leagues",
+            "lgs",
+            "ls",
+            "league",
+            "leagueList",
+            "seasonalLeagues",
+            "srvl",
+        ]
+
+        for key in preferred_keys:
+            if key in value:
+                result = find_league_list(
+                    value[key],
+                    depth + 1,
+                )
+
+                if result:
+                    return result
+
+        for key, nested_value in value.items():
+            if key in ["tkn", "token", "accessToken"]:
+                continue
+
+            result = find_league_list(
+                nested_value,
+                depth + 1,
+            )
+
+            if result:
+                return result
+
+    return []
 
 
-def extract_managers(stats):
-    """Sucht die Manager-Liste in den Liga-Statistiken."""
-    managers = first_list(
-        stats,
-        ["users", "us", "u", "managers", "ranking"],
-    )
+def find_user_object(value):
+    """Sucht ein wahrscheinliches User-Objekt."""
+    if not isinstance(value, dict):
+        return {}
 
-    if managers:
-        return managers
+    for key in ["user", "u", "usr", "me"]:
+        possible_user = value.get(key)
 
-    # Manche Antworten enthalten ein zusätzliches Datenobjekt.
-    nested_data = first_value(
-        stats,
-        ["data", "d", "stats"],
-        {},
-    )
+        if isinstance(possible_user, dict):
+            return possible_user
 
-    return first_list(
-        nested_data,
-        ["users", "us", "u", "managers", "ranking"],
+    return {}
+
+
+def extract_items(data, preferred_keys):
+    """Sucht eine Liste in einer API-Antwort."""
+    if isinstance(data, list):
+        return data
+
+    if not isinstance(data, dict):
+        return []
+
+    direct = first_list(data, preferred_keys)
+
+    if direct:
+        return direct
+
+    for key in ["data", "d", "result", "r"]:
+        nested = data.get(key)
+
+        if isinstance(nested, list):
+            return nested
+
+        if isinstance(nested, dict):
+            nested_result = first_list(
+                nested,
+                preferred_keys,
+            )
+
+            if nested_result:
+                return nested_result
+
+    return []
+
+
+def extract_managers(data):
+    """Sucht Manager in einer API-Antwort."""
+    return extract_items(
+        data,
+        [
+            "users",
+            "u",
+            "us",
+            "managers",
+            "ranking",
+            "items",
+            "it",
+        ],
     )
 
 
 def extract_players(data):
-    """Sucht eine Spielerliste in einer API-Antwort."""
-    players = first_list(
+    """Sucht Spieler in einer API-Antwort."""
+    return extract_items(
         data,
-        ["players", "p", "it", "items"],
-    )
-
-    if players:
-        return players
-
-    nested_data = first_value(
-        data,
-        ["data", "d"],
-        {},
-    )
-
-    return first_list(
-        nested_data,
-        ["players", "p", "it", "items"],
+        ["players", "p", "items", "it"],
     )
 
 
 def extract_feed_items(data):
     """Sucht Feed-Einträge in einer API-Antwort."""
-    items = first_list(
+    return extract_items(
         data,
         ["items", "it", "feed", "f"],
     )
 
-    if items:
-        return items
 
-    nested_data = first_value(
-        data,
-        ["data", "d"],
-        {},
-    )
+def safe_structure(value, depth=0):
+    """
+    Erstellt eine sichere Übersicht der API-Struktur.
 
-    return first_list(
-        nested_data,
-        ["items", "it", "feed", "f"],
-    )
+    Tokenwerte werden ausgeblendet.
+    """
+    if depth > 4:
+        return "[weitere Ebene ausgeblendet]"
+
+    if isinstance(value, dict):
+        result = {}
+
+        for key, nested_value in value.items():
+            if key.lower() in [
+                "tkn",
+                "token",
+                "accesstoken",
+                "password",
+                "pass",
+            ]:
+                result[key] = "[AUSGEBLENDET]"
+            else:
+                result[key] = safe_structure(
+                    nested_value,
+                    depth + 1,
+                )
+
+        return result
+
+    if isinstance(value, list):
+        if not value:
+            return []
+
+        return {
+            "Typ": "Liste",
+            "Anzahl": len(value),
+            "Beispielstruktur": safe_structure(
+                value[0],
+                depth + 1,
+            ),
+        }
+
+    return f"<{type(value).__name__}>"
 
 
-def player_rows(players):
-    """Baut eine Tabelle aus einer Spielerliste."""
+def player_table(players):
+    """Erstellt die Kader-Tabelle."""
     rows = []
 
     for player in players:
-        position = first_value(
-            player,
-            ["position", "pos", "p"],
-        )
-        market_value = first_value(
-            player,
-            ["marketValue", "mv"],
-        )
-        average_points = first_value(
-            player,
-            ["averagePoints", "ap", "avgPoints"],
-        )
-        total_points = first_value(
-            player,
-            ["totalPoints", "tp", "points"],
-        )
-        status = first_value(
-            player,
-            ["status", "st"],
-            "—",
-        )
-
         rows.append(
             {
                 "Spieler": get_player_name(player),
-                "Position": map_position(position),
-                "Marktwert": format_currency(market_value),
-                "Ø Punkte": format_number(average_points),
-                "Gesamtpunkte": format_number(total_points),
-                "Status": status,
+                "Position": map_position(
+                    first_value(
+                        player,
+                        ["position", "pos", "p"],
+                    )
+                ),
+                "Marktwert": format_currency(
+                    first_value(
+                        player,
+                        ["marketValue", "mv"],
+                    )
+                ),
+                "Ø Punkte": format_number(
+                    first_value(
+                        player,
+                        ["averagePoints", "ap"],
+                    )
+                ),
+                "Gesamtpunkte": format_number(
+                    first_value(
+                        player,
+                        ["totalPoints", "tp", "points"],
+                    )
+                ),
+                "Status": first_value(
+                    player,
+                    ["status", "st"],
+                    "—",
+                ),
             }
         )
 
-    return rows
+    return pd.DataFrame(rows)
 
 
 def get_feed_meta(item):
@@ -296,26 +401,8 @@ def get_feed_meta(item):
     return meta if isinstance(meta, dict) else {}
 
 
-def feed_user_id(item):
-    """Sucht die Manager-ID in einem Feed-Eintrag."""
-    meta = get_feed_meta(item)
-
-    value = first_value(
-        item,
-        ["userId", "uid", "ownerId"],
-    )
-
-    if value is None:
-        value = first_value(
-            meta,
-            ["userId", "uid", "buyerId", "sellerId"],
-        )
-
-    return str(value) if value is not None else ""
-
-
 def transfer_row(item):
-    """Wandelt einen Transfer-Feed-Eintrag in eine Tabellenzeile um."""
+    """Wandelt einen Transfer in eine Tabellenzeile um."""
     raw_type = first_value(item, ["type", "t"])
 
     try:
@@ -323,13 +410,13 @@ def transfer_row(item):
     except (TypeError, ValueError):
         return None
 
-    transfer_types = {
+    event_names = {
         2: "Verkauf",
         3: "Auf Transfermarkt gestellt",
         12: "Kauf",
     }
 
-    if item_type not in transfer_types:
+    if item_type not in event_names:
         return None
 
     meta = get_feed_meta(item)
@@ -341,7 +428,7 @@ def transfer_row(item):
 
     amount = first_value(
         meta,
-        ["value", "v", "price", "pr", "amount", "a", "mv"],
+        ["value", "v", "price", "pr", "amount", "mv"],
     )
 
     if amount is None:
@@ -361,16 +448,16 @@ def transfer_row(item):
 
     return {
         "Datum": date,
-        "Typ": transfer_types[item_type],
+        "Typ": event_names[item_type],
         "Spieler": player_name,
         "Betrag": format_currency(amount),
-        "_typ": item_type,
-        "_betrag": amount,
+        "_type": item_type,
+        "_amount": amount,
     }
 
 
 # ---------------------------------------------------------
-# Streamlit-Konfiguration
+# Seiteneinstellungen
 # ---------------------------------------------------------
 
 st.set_page_config(
@@ -383,7 +470,7 @@ st.sidebar.title("⚽ Kickbase Dashboard")
 
 
 # ---------------------------------------------------------
-# Abmelden
+# Abmeldung
 # ---------------------------------------------------------
 
 if st.session_state.get("logged_in"):
@@ -393,7 +480,7 @@ if st.session_state.get("logged_in"):
 
 
 # ---------------------------------------------------------
-# Login
+# Anmeldung
 # ---------------------------------------------------------
 
 if not st.session_state.get("logged_in"):
@@ -408,75 +495,99 @@ if not st.session_state.get("logged_in"):
     if st.sidebar.button("Einloggen", type="primary"):
         if not email or not password:
             st.sidebar.warning(
-                "Bitte gib deine E-Mail-Adresse und dein Passwort ein."
+                "Bitte gib E-Mail-Adresse und Passwort ein."
             )
         else:
             try:
-                with st.spinner("Anmeldung bei Kickbase läuft …"):
+                with st.spinner(
+                    "Anmeldung bei Kickbase läuft …"
+                ):
                     api = KickbaseAPI()
-                    login_result = api.login(email, password)
+                    login_result = api.login(
+                        email,
+                        password,
+                    )
 
-                user = extract_user(login_result)
-                leagues = extract_leagues(login_result)
+                user = find_user_object(login_result)
+                leagues = find_league_list(login_result)
 
-               if not leagues:
-    st.sidebar.error(
-        "Die Anmeldung hat funktioniert, aber in der "
-        "Antwort wurden keine Ligen gefunden."
-    )
+                # Wenn keine Liga in der Login-Antwort steckt,
+                # versucht die App einen separaten Liga-Endpunkt.
+                separate_league_result = None
 
-    # Zeigt nur die Feldnamen, niemals Passwort oder Tokenwerte.
-    sichere_feldnamen = [
-        key for key in login_result.keys()
-        if key not in ("tkn", "token")
-    ]
+                if not leagues:
+                    try:
+                        separate_league_result = (
+                            api.get_leagues()
+                        )
+                        leagues = find_league_list(
+                            separate_league_result
+                        )
 
-    st.write("Felder der Kickbase-Antwort:")
-    st.code(", ".join(sichere_feldnamen))
+                        if not leagues:
+                            leagues = extract_items(
+                                separate_league_result,
+                                [
+                                    "leagues",
+                                    "lgs",
+                                    "ls",
+                                    "items",
+                                    "it",
+                                ],
+                            )
+                    except Exception:
+                        separate_league_result = None
 
-    with st.expander("Struktur der Antwort untersuchen"):
-        struktur = {}
+                if not leagues:
+                    st.error(
+                        "Die Anmeldung funktioniert, aber die "
+                        "Liga-Liste konnte noch nicht erkannt werden."
+                    )
 
-        for key, value in login_result.items():
-            if key in ("tkn", "token"):
-                struktur[key] = "[AUSGEBLENDET]"
-            elif isinstance(value, dict):
-                struktur[key] = {
-                    "Typ": "Objekt",
-                    "Felder": list(value.keys())
-                }
-            elif isinstance(value, list):
-                struktur[key] = {
-                    "Typ": "Liste",
-                    "Anzahl": len(value)
-                }
-            else:
-                struktur[key] = {
-                    "Typ": type(value).__name__
-                }
+                    st.write(
+                        "Sichere Struktur der Login-Antwort:"
+                    )
+                    st.json(
+                        safe_structure(login_result)
+                    )
 
-        st.json(struktur)
-                else:
-                    st.session_state["api"] = api
-                    st.session_state["user"] = user
-                    st.session_state["leagues"] = leagues
-                    st.session_state["logged_in"] = True
+                    if separate_league_result is not None:
+                        st.write(
+                            "Sichere Struktur der separaten "
+                            "Liga-Antwort:"
+                        )
+                        st.json(
+                            safe_structure(
+                                separate_league_result
+                            )
+                        )
 
-                    st.rerun()
+                    st.info(
+                        "Token und Passwort werden in dieser "
+                        "Diagnose automatisch ausgeblendet."
+                    )
+                    st.stop()
+
+                st.session_state["api"] = api
+                st.session_state["user"] = user
+                st.session_state["leagues"] = leagues
+                st.session_state["logged_in"] = True
+
+                st.rerun()
 
             except Exception as error:
                 st.sidebar.error(str(error))
 
     st.title("⚽ Kickbase Liga-Dashboard")
     st.info(
-        "Gib links deine Kickbase-Zugangsdaten ein und "
-        "klicke auf „Einloggen“."
+        "Gib links deine Kickbase-Zugangsdaten ein "
+        "und klicke auf „Einloggen“."
     )
     st.stop()
 
 
 # ---------------------------------------------------------
-# Daten aus der Sitzung
+# Sitzungsdaten
 # ---------------------------------------------------------
 
 api = st.session_state["api"]
@@ -484,7 +595,7 @@ current_user = st.session_state.get("user", {})
 leagues = st.session_state.get("leagues", [])
 
 if not leagues:
-    st.error("Für deinen Account wurden keine Ligen gefunden.")
+    st.error("Es wurden keine Ligen gefunden.")
     st.stop()
 
 
@@ -497,7 +608,9 @@ league_indices = list(range(len(leagues)))
 selected_league_index = st.sidebar.selectbox(
     "Liga auswählen",
     league_indices,
-    format_func=lambda index: get_league_name(leagues[index]),
+    format_func=lambda index: get_league_name(
+        leagues[index]
+    ),
 )
 
 selected_league = leagues[selected_league_index]
@@ -505,15 +618,20 @@ league_id = get_league_id(selected_league)
 league_name = get_league_name(selected_league)
 
 if not league_id:
-    st.error("Die ausgewählte Liga besitzt keine erkennbare Liga-ID.")
+    st.error(
+        "Die ausgewählte Liga besitzt keine erkennbare ID."
+    )
+    st.json(safe_structure(selected_league))
     st.stop()
 
 current_user_id = get_manager_id(current_user)
 
 st.sidebar.success("Erfolgreich angemeldet")
-st.sidebar.caption(
-    f"Account: {get_manager_name(current_user)}"
-)
+
+if current_user:
+    st.sidebar.caption(
+        f"Account: {get_manager_name(current_user)}"
+    )
 
 
 # ---------------------------------------------------------
@@ -523,23 +641,26 @@ st.sidebar.caption(
 st.title(f"⚽ {league_name}")
 
 try:
-    with st.spinner("Liga wird geladen …"):
-        league_stats = api.get_league_stats(league_id)
+    with st.spinner("Manager werden geladen …"):
+        manager_result = api.get_league_users(
+            league_id
+        )
 
-    managers = extract_managers(league_stats)
+    managers = extract_managers(manager_result)
 
 except Exception as error:
-    st.error(f"Liga konnte nicht geladen werden: {error}")
+    st.error(
+        f"Die Manager konnten nicht geladen werden: {error}"
+    )
     st.stop()
 
 if not managers:
     st.error(
-        "In der API-Antwort wurde keine Manager-Liste gefunden."
+        "In der API-Antwort wurde keine Manager-Liste erkannt."
     )
 
-    with st.expander("Technische API-Antwort anzeigen"):
-        st.json(league_stats)
-
+    st.write("Sichere Struktur der Manager-Antwort:")
+    st.json(safe_structure(manager_result))
     st.stop()
 
 
@@ -552,7 +673,9 @@ manager_indices = list(range(len(managers)))
 selected_manager_index = st.selectbox(
     "👤 Manager auswählen",
     manager_indices,
-    format_func=lambda index: get_manager_name(managers[index]),
+    format_func=lambda index: get_manager_name(
+        managers[index]
+    ),
 )
 
 selected_manager = managers[selected_manager_index]
@@ -561,29 +684,30 @@ selected_user_name = get_manager_name(selected_manager)
 
 if not selected_user_id:
     st.error(
-        "Für diesen Manager wurde keine erkennbare User-ID gefunden."
+        "Für diesen Manager wurde keine User-ID gefunden."
     )
+    st.json(safe_structure(selected_manager))
     st.stop()
 
 is_own_account = (
     bool(current_user_id)
-    and str(selected_user_id) == str(current_user_id)
+    and selected_user_id == current_user_id
 )
 
 
 # ---------------------------------------------------------
-# Kader einmalig laden
+# Kader laden
 # ---------------------------------------------------------
 
 players = []
 players_error = None
 
 try:
-    players_data = api.get_user_players(
+    player_result = api.get_user_players(
         league_id,
         selected_user_id,
     )
-    players = extract_players(players_data)
+    players = extract_players(player_result)
 
 except Exception as error:
     players_error = str(error)
@@ -593,7 +717,7 @@ except Exception as error:
 # Tabs
 # ---------------------------------------------------------
 
-tab_kader, tab_lineup, tab_market, tab_finance, tab_history = st.tabs(
+tabs = st.tabs(
     [
         "📋 Kader",
         "⚽ Aufstellung",
@@ -603,65 +727,72 @@ tab_kader, tab_lineup, tab_market, tab_finance, tab_history = st.tabs(
     ]
 )
 
+tab_kader = tabs[0]
+tab_lineup = tabs[1]
+tab_market = tabs[2]
+tab_finance = tabs[3]
+tab_history = tabs[4]
+
 
 # ---------------------------------------------------------
-# Tab 1: Kader
+# Tab: Kader
 # ---------------------------------------------------------
 
 with tab_kader:
     st.subheader(f"Kader von {selected_user_name}")
 
     if players_error:
-        st.error(f"Kader konnte nicht geladen werden: {players_error}")
+        st.error(
+            f"Kader konnte nicht geladen werden: "
+            f"{players_error}"
+        )
 
     elif not players:
-        st.info("Für diesen Manager wurden keine Spieler gefunden.")
+        st.info("Es wurden keine Spieler gefunden.")
+
+        if "player_result" in locals():
+            with st.expander(
+                "Technische Struktur anzeigen"
+            ):
+                st.json(
+                    safe_structure(player_result)
+                )
 
     else:
-        rows = player_rows(players)
-        dataframe = pd.DataFrame(rows)
-
         st.metric("Anzahl Spieler", len(players))
 
         st.dataframe(
-            dataframe,
+            player_table(players),
             use_container_width=True,
             hide_index=True,
         )
 
 
 # ---------------------------------------------------------
-# Tab 2: Aufstellung
+# Tab: Aufstellung
 # ---------------------------------------------------------
 
 with tab_lineup:
-    st.subheader(f"Aufstellung von {selected_user_name}")
+    st.subheader(
+        f"Aufstellung von {selected_user_name}"
+    )
 
     if not is_own_account:
         st.info(
-            "Der verwendete Lineup-Endpunkt liefert grundsätzlich "
-            "nur die Aufstellung des angemeldeten Accounts."
+            "Die aktuelle Aufstellung kann über diesen "
+            "Endpunkt möglicherweise nur für den eigenen "
+            "Account geladen werden."
         )
-
-        if players:
-            st.write(
-                "Als Ersatz wird der vollständige Kader angezeigt. "
-                "Die Startelf kann daraus nicht sicher bestimmt werden."
-            )
-
-            st.dataframe(
-                pd.DataFrame(player_rows(players)),
-                use_container_width=True,
-                hide_index=True,
-            )
 
     else:
         try:
-            lineup_data = api.get_lineup(league_id)
-            lineup_players = extract_players(lineup_data)
+            lineup_result = api.get_lineup(league_id)
+            lineup_players = extract_players(
+                lineup_result
+            )
 
             formation = first_value(
-                lineup_data,
+                lineup_result,
                 ["formation", "f", "type"],
                 "Nicht angegeben",
             )
@@ -670,163 +801,182 @@ with tab_lineup:
 
             if lineup_players:
                 st.dataframe(
-                    pd.DataFrame(player_rows(lineup_players)),
+                    player_table(lineup_players),
                     use_container_width=True,
                     hide_index=True,
                 )
             else:
                 st.info(
-                    "In der API-Antwort wurde keine Aufstellung gefunden."
+                    "Es wurde keine Aufstellung erkannt."
                 )
 
-                with st.expander("Technische API-Antwort anzeigen"):
-                    st.json(lineup_data)
+                with st.expander(
+                    "Technische Struktur anzeigen"
+                ):
+                    st.json(
+                        safe_structure(lineup_result)
+                    )
 
         except Exception as error:
             st.warning(
-                f"Aufstellung konnte nicht geladen werden: {error}"
+                f"Aufstellung konnte nicht geladen werden: "
+                f"{error}"
             )
 
 
 # ---------------------------------------------------------
-# Tab 3: Transfermarkt
+# Tab: Transfermarkt
 # ---------------------------------------------------------
 
 with tab_market:
     st.subheader(
-        f"Transfermarkt-Spieler von {selected_user_name}"
+        f"Transfermarkt von {selected_user_name}"
     )
 
     try:
-        market_data = api.get_market(league_id)
-        market_players = extract_players(market_data)
+        market_result = api.get_market(league_id)
+        market_players = extract_players(market_result)
 
-        selected_market_players = []
+        manager_market_players = []
 
         for player in market_players:
-            owner = first_value(
+            owner_id = first_value(
                 player,
-                ["userId", "uid", "ownerId", "sellerId"],
+                [
+                    "userId",
+                    "uid",
+                    "ownerId",
+                    "sellerId",
+                    "ui",
+                ],
             )
 
-            if owner is None:
-                meta = first_value(player, ["meta", "m"], {})
+            if owner_id is not None:
+                if str(owner_id) == selected_user_id:
+                    manager_market_players.append(player)
 
-                if isinstance(meta, dict):
-                    owner = first_value(
-                        meta,
-                        ["userId", "uid", "ownerId", "sellerId"],
-                    )
+        if manager_market_players:
+            market_rows = []
 
-            if owner is not None and str(owner) == str(selected_user_id):
-                selected_market_players.append(player)
-
-        if selected_market_players:
-            rows = []
-
-            for player in selected_market_players:
-                rows.append(
+            for player in manager_market_players:
+                market_rows.append(
                     {
-                        "Spieler": get_player_name(player),
+                        "Spieler": get_player_name(
+                            player
+                        ),
                         "Marktwert": format_currency(
                             first_value(
                                 player,
                                 ["marketValue", "mv"],
                             )
                         ),
-                        "Angebotspreis": format_currency(
+                        "Preis": format_currency(
                             first_value(
                                 player,
-                                ["price", "pr", "value", "v"],
+                                ["price", "pr", "value"],
                             )
                         ),
                         "Ablauf": first_value(
                             player,
-                            ["expiry", "exp", "expiresAt"],
+                            [
+                                "expiry",
+                                "exp",
+                                "expiresAt",
+                            ],
                             "—",
                         ),
                     }
                 )
 
             st.dataframe(
-                pd.DataFrame(rows),
+                pd.DataFrame(market_rows),
                 use_container_width=True,
                 hide_index=True,
             )
 
         else:
             st.info(
-                f"Es wurden aktuell keine eindeutig {selected_user_name} "
-                "zugeordneten Transfermarkt-Spieler gefunden."
+                "Es wurden keine eindeutig diesem Manager "
+                "zugeordneten Marktspieler gefunden."
             )
 
-        with st.expander("Gesamten Transfermarkt anzeigen"):
-            all_market_rows = []
+        with st.expander(
+            "Gesamten Transfermarkt anzeigen"
+        ):
+            all_rows = []
 
             for player in market_players:
-                all_market_rows.append(
+                all_rows.append(
                     {
-                        "Spieler": get_player_name(player),
+                        "Spieler": get_player_name(
+                            player
+                        ),
                         "Marktwert": format_currency(
                             first_value(
                                 player,
                                 ["marketValue", "mv"],
                             )
                         ),
-                        "Angebotspreis": format_currency(
+                        "Preis": format_currency(
                             first_value(
                                 player,
-                                ["price", "pr", "value", "v"],
+                                ["price", "pr", "value"],
                             )
                         ),
                     }
                 )
 
-            if all_market_rows:
+            if all_rows:
                 st.dataframe(
-                    pd.DataFrame(all_market_rows),
+                    pd.DataFrame(all_rows),
                     use_container_width=True,
                     hide_index=True,
                 )
             else:
-                st.write("Der Transfermarkt ist leer.")
+                st.write(
+                    "Der Transfermarkt ist leer."
+                )
 
     except Exception as error:
         st.error(
-            f"Transfermarkt konnte nicht geladen werden: {error}"
+            f"Transfermarkt konnte nicht geladen werden: "
+            f"{error}"
         )
 
 
 # ---------------------------------------------------------
-# Tab 4: Finanzen
+# Tab: Finanzen
 # ---------------------------------------------------------
 
 with tab_finance:
-    st.subheader(f"Finanzen von {selected_user_name}")
+    st.subheader(
+        f"Finanzen von {selected_user_name}"
+    )
 
     team_value = first_value(
         selected_manager,
         ["teamValue", "tv", "squadValue", "sv"],
     )
 
-    # Ersatzberechnung: Summe der Marktwerte aller Spieler.
     if team_value is None and players:
-        values = []
+        player_values = []
 
         for player in players:
-            value = first_value(
+            market_value = first_value(
                 player,
                 ["marketValue", "mv"],
                 0,
             )
 
             try:
-                values.append(float(value))
+                player_values.append(
+                    float(market_value)
+                )
             except (TypeError, ValueError):
                 pass
 
-        if values:
-            team_value = sum(values)
+        if player_values:
+            team_value = sum(player_values)
 
     points = first_value(
         selected_manager,
@@ -834,59 +984,58 @@ with tab_finance:
         0,
     )
 
-    column_1, column_2, column_3 = st.columns(3)
+    col1, col2, col3 = st.columns(3)
 
-    column_1.metric(
+    col1.metric(
         "Kaderwert",
         format_currency(team_value),
     )
 
-    column_3.metric(
+    col3.metric(
         "Punkte",
         format_number(points),
     )
 
     if is_own_account:
         try:
-            me_data = api.get_league_me(league_id)
+            me_result = api.get_league_me(
+                league_id
+            )
 
             budget = first_value(
-                me_data,
+                me_result,
                 ["budget", "b", "cash"],
             )
 
-            own_team_value = first_value(
-                me_data,
-                ["teamValue", "tv", "squadValue"],
-            )
-
-            if own_team_value is not None:
-                column_1.metric(
-                    "Kaderwert",
-                    format_currency(own_team_value),
-                )
-
-            column_2.metric(
+            col2.metric(
                 "Budget",
                 format_currency(budget),
             )
 
         except Exception as error:
-            column_2.metric("Budget", "Nicht verfügbar")
-            st.warning(
-                f"Eigene Finanzdaten konnten nicht geladen werden: {error}"
+            col2.metric(
+                "Budget",
+                "Nicht verfügbar",
             )
 
+            st.warning(
+                f"Budget konnte nicht geladen werden: "
+                f"{error}"
+            )
     else:
-        column_2.metric("Budget", "Nicht einsehbar")
+        col2.metric(
+            "Budget",
+            "Nicht einsehbar",
+        )
+
         st.caption(
-            "Das genaue Budget anderer Manager wird von diesem "
-            "API-Endpunkt nicht bereitgestellt."
+            "Das genaue Budget anderer Manager wird "
+            "möglicherweise nicht von der API ausgegeben."
         )
 
 
 # ---------------------------------------------------------
-# Tab 5: Transferhistorie
+# Tab: Transferhistorie
 # ---------------------------------------------------------
 
 with tab_history:
@@ -894,57 +1043,53 @@ with tab_history:
         f"Transferhistorie von {selected_user_name}"
     )
 
-    all_feed_items = []
-    used_league_feed = False
+    feed_items = []
 
-    # Zuerst wird der User-Feed probiert.
     try:
-        for start in (0, 25, 50, 75, 100):
-            feed_data = api.get_user_feed(
+        for start in [0, 25, 50, 75, 100]:
+            feed_result = api.get_user_feed(
                 league_id,
                 selected_user_id,
                 start,
             )
-            items = extract_feed_items(feed_data)
 
-            if not items:
+            page_items = extract_feed_items(
+                feed_result
+            )
+
+            if not page_items:
                 break
 
-            all_feed_items.extend(items)
+            feed_items.extend(page_items)
 
     except Exception:
-        # Falls der User-Feed nicht existiert, wird der Liga-Feed verwendet.
-        used_league_feed = True
-        all_feed_items = []
+        feed_items = []
 
         try:
-            for start in (0, 25, 50, 75, 100):
-                feed_data = api.get_league_feed(
+            for start in [0, 25, 50, 75, 100]:
+                feed_result = api.get_league_feed(
                     league_id,
                     start,
                 )
-                items = extract_feed_items(feed_data)
 
-                if not items:
+                page_items = extract_feed_items(
+                    feed_result
+                )
+
+                if not page_items:
                     break
 
-                all_feed_items.extend(items)
+                feed_items.extend(page_items)
 
         except Exception as error:
             st.error(
-                f"Transferhistorie konnte nicht geladen werden: {error}"
+                f"Transferhistorie konnte nicht "
+                f"geladen werden: {error}"
             )
 
     transfer_rows = []
 
-    for item in all_feed_items:
-        # Beim Liga-Feed möglichst auf den ausgewählten User filtern.
-        if used_league_feed:
-            item_user_id = feed_user_id(item)
-
-            if item_user_id and item_user_id != str(selected_user_id):
-                continue
-
+    for item in feed_items:
         row = transfer_row(item)
 
         if row:
@@ -952,7 +1097,6 @@ with tab_history:
 
     if transfer_rows:
         visible_rows = []
-
         purchases = 0.0
         sales = 0.0
 
@@ -967,14 +1111,16 @@ with tab_history:
             )
 
             try:
-                amount = float(row["_betrag"] or 0)
+                amount = float(
+                    row["_amount"] or 0
+                )
             except (TypeError, ValueError):
                 amount = 0.0
 
-            if row["_typ"] == 12:
+            if row["_type"] == 12:
                 purchases += amount
 
-            elif row["_typ"] == 2:
+            if row["_type"] == 2:
                 sales += amount
 
         st.dataframe(
@@ -983,40 +1129,44 @@ with tab_history:
             hide_index=True,
         )
 
-        st.caption(
-            f"{len(visible_rows)} Transferereignisse geladen."
+        transfer_col1, transfer_col2, transfer_col3 = (
+            st.columns(3)
         )
 
-        finance_column_1, finance_column_2, finance_column_3 = st.columns(3)
-
-        finance_column_1.metric(
+        transfer_col1.metric(
             "Käufe",
             format_currency(purchases),
         )
-        finance_column_2.metric(
+
+        transfer_col2.metric(
             "Verkäufe",
             format_currency(sales),
         )
-        finance_column_3.metric(
+
+        transfer_col3.metric(
             "Transfer-Saldo",
-            format_currency(sales - purchases),
+            format_currency(
+                sales - purchases
+            ),
         )
 
-        st.info(
-            "Der Transfer-Saldo ist Verkäufe minus Käufe. Ein echter "
-            "realisierter Gewinn je Spieler kann nur berechnet werden, "
-            "wenn für denselben Spieler sowohl Kaufpreis als auch "
-            "Verkaufspreis vollständig im geladenen Feed vorhanden sind."
+        st.caption(
+            "Der Transfer-Saldo entspricht Verkäufen "
+            "minus Käufen."
         )
 
     else:
         st.info(
-            "Es wurden keine passenden Transfers gefunden. "
-            "Möglicherweise verwendet der Feed andere Ereignistypen "
-            "oder stellt für diesen Manager keine vollständige "
-            "Historie bereit."
+            "Es wurden noch keine passenden "
+            "Transferereignisse erkannt."
         )
 
-        if all_feed_items:
-            with st.expander("Technischen Feed zur Fehleranalyse anzeigen"):
-                st.json(all_feed_items[:10])
+        if feed_items:
+            with st.expander(
+                "Sichere Feed-Struktur anzeigen"
+            ):
+                st.json(
+                    safe_structure(
+                        feed_items[:3]
+                    )
+                )
