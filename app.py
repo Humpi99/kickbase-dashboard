@@ -1,13 +1,24 @@
 """
 Kickbase Liga-Dashboard.
 
-KPIs: Mannschaft, Gewinn, Trend.
+KPIs: Mannschaft, Gewinn, Trend, weitere KPIs.
 """
 
 import pandas as pd
 import streamlit as st
 
 from kickbase_api import KickbaseAPI
+
+
+# ---------------------------------------------------------
+# Farben
+# ---------------------------------------------------------
+
+COLOR_POSITIVE = "#12a150"
+COLOR_NEGATIVE = "#e03131"
+COLOR_NEUTRAL = "#1c1c1c"
+COLOR_LABEL = "#8a8a8a"
+COLOR_LINE = "#e6e6e6"
 
 
 # ---------------------------------------------------------
@@ -677,20 +688,12 @@ def load_feed_transfers(api, league_id, manager_id):
 # Farbgebung der Tabelle
 # ---------------------------------------------------------
 
-# Dezente Farbtoene fuer die gesamte Anwendung
-COLOR_POSITIVE = "#4a7c59"
-COLOR_NEGATIVE = "#a35c5c"
-COLOR_NEUTRAL = "#2c2c2c"
-COLOR_LABEL = "#8a8a8a"
-COLOR_LINE = "#e6e6e6"
-
-
 def style_player_table(frame):
     """
     Färbt die Kadertabelle ein.
 
     Trading Spieler werden ausgegraut.
-    Plus und Minus werden dezent eingefärbt.
+    Plus ist grün, Minus ist rot.
     """
 
     def color_row(row):
@@ -704,14 +707,20 @@ def style_player_table(frame):
         return [""] * len(row)
 
     def color_change(value):
-        """Färbt Beträge dezent grün oder rot."""
+        """Färbt Beträge grün oder rot."""
         text = str(value)
 
         if text.startswith("+"):
-            return f"color: {COLOR_POSITIVE}"
+            return (
+                f"color: {COLOR_POSITIVE}; "
+                "font-weight: 600"
+            )
 
         if text.startswith("-"):
-            return f"color: {COLOR_NEGATIVE}"
+            return (
+                f"color: {COLOR_NEGATIVE}; "
+                "font-weight: 600"
+            )
 
         return ""
 
@@ -729,14 +738,14 @@ def style_player_table(frame):
 
 
 # ---------------------------------------------------------
-# KPI-Blöcke, dezent gestaltet
+# KPI-Blöcke
 # ---------------------------------------------------------
 
 def kpi_block(title, entries):
     """
-    Zeigt einen KPI-Block mit Überschrift und drei Spalten.
+    Zeigt einen KPI-Block mit Überschrift und Spalten.
 
-    entries ist eine Liste aus drei Einträgen:
+    entries ist eine Liste aus Einträgen:
     (Beschriftung, Hauptwert, Zusatzzeilen, Farbe)
     Zusatzzeilen ist eine Liste aus Texten.
     Farbe ist "neutral", "plus" oder "minus".
@@ -756,7 +765,7 @@ def kpi_block(title, entries):
         unsafe_allow_html=True,
     )
 
-    columns = st.columns(3)
+    columns = st.columns(len(entries))
 
     for column, entry in zip(columns, entries):
         label, value, notes, tone = entry
@@ -777,7 +786,7 @@ def kpi_block(title, entries):
             f"<div style='padding:8px 0 2px 0;'>"
             f"<div style='font-size:12px;"
             f"color:{COLOR_LABEL};'>{label}</div>"
-            f"<div style='font-size:21px;font-weight:600;"
+            f"<div style='font-size:24px;font-weight:700;"
             f"color:{color};padding:2px 0 4px 0;'>"
             f"{value}</div>"
             f"{notes_html}"
@@ -794,6 +803,42 @@ def tone_of(value):
         return "neutral"
 
     return "plus" if number > 0 else "minus"
+
+
+# ---------------------------------------------------------
+# Platzhalter für den vierten KPI-Block
+# ---------------------------------------------------------
+
+# Hier tragen wir spaeter die echten Berechnungen ein.
+# Aufbau je Eintrag: (Beschriftung, Hinweistext)
+
+EXTRA_KPI_PLACEHOLDERS = [
+    ("KPI 1", "Berechnung folgt"),
+    ("KPI 2", "Berechnung folgt"),
+    ("KPI 3", "Berechnung folgt"),
+]
+
+
+def build_extra_kpis():
+    """
+    Baut die Einträge für den vierten KPI-Block.
+
+    Solange keine Berechnung hinterlegt ist,
+    wird ein Platzhalter angezeigt.
+    """
+    entries = []
+
+    for label, note in EXTRA_KPI_PLACEHOLDERS:
+        entries.append(
+            (
+                label,
+                "—",
+                [note],
+                "neutral",
+            )
+        )
+
+    return entries
 
 
 # ---------------------------------------------------------
@@ -1055,14 +1100,14 @@ if realized_profit is not None:
 
 
 # ---------------------------------------------------------
-# KPI-Anzeige in drei Blöcken
+# KPI-Anzeige
 # ---------------------------------------------------------
 
 st.subheader(
     f"Kennzahlen: {selected_manager_name}"
 )
 
-# Block 1: Mannschaft mit Marktwert und Einstandspreis
+# Block 1: Mannschaft
 kpi_block(
     "Mannschaft",
     [
@@ -1146,6 +1191,12 @@ kpi_block(
             tone_of(daily_change_total),
         ),
     ],
+)
+
+# Block 4: Platzhalter für weitere KPIs
+kpi_block(
+    "Weitere KPIs",
+    build_extra_kpis(),
 )
 
 st.markdown("")
