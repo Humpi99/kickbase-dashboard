@@ -163,7 +163,27 @@ class KickbaseAPI:
 
         return self.try_paths(paths)
 
-    def get_user_players(self, league_id, user_id):
+    def get_user_players(self, league_id, user_id, day_number=1):
+    """
+    Lädt den Team-Center eines Managers.
+
+    Der Team-Center enthält den Kader beziehungsweise
+    die Mannschaft für den angegebenen Spieltag.
+    """
+
+    paths = [
+        f"/v4/leagues/{league_id}/users/{user_id}/teamcenter",
+    ]
+
+    results, errors = self.try_paths(
+        paths,
+        params={"dayNumber": day_number},
+    )
+
+    if results:
+        return results[0]["data"]
+
+    raise Exception(" | ".join(errors))
         """Versucht, den Kader eines Managers zu laden."""
         paths = [
             f"/v4/leagues/{league_id}/users/{user_id}/players",
