@@ -169,33 +169,22 @@ def get_player_name(player):
 # Feldnamen
 # ---------------------------------------------------------
 
+# mv ist der aktuelle Marktwert
 MARKET_VALUE_KEYS = [
-    "marketValue",
     "mv",
+    "marketValue",
     "currentValue",
     "cv",
 ]
 
-BUY_PRICE_KEYS = [
-    "buyPrice",
-    "bp",
-    "purchasePrice",
-    "pp",
-    "boughtFor",
-    "bf",
-    "prc",
-    "trp",
-]
-
-TOTAL_PROFIT_KEYS = [
+# mvgl ist der Marktwertgewinn seit dem Kauf
+PROFIT_KEYS = [
+    "mvgl",
     "profit",
     "prof",
-    "totalProfit",
-    "tpr",
-    "prft",
-    "gain",
 ]
 
+# tfhmvt ist die Änderung der letzten 24 Stunden
 DAILY_CHANGE_KEYS = [
     "tfhmvt",
     "mvt",
@@ -203,7 +192,7 @@ DAILY_CHANGE_KEYS = [
     "dmv",
 ]
 
-# Das Feld "lo" enthält den Platz in der Startelf.
+# lo enthält den Platz in der Startelf
 LINEUP_FIELD = "lo"
 
 
@@ -212,6 +201,28 @@ def get_market_value(player):
     return to_number(
         first_value(player, MARKET_VALUE_KEYS)
     )
+
+
+def get_profit(player):
+    """Liest den Marktwertgewinn seit dem Kauf."""
+    return to_number(
+        first_value(player, PROFIT_KEYS)
+    )
+
+
+def get_buy_price(player):
+    """
+    Berechnet den Einstandspreis.
+
+    Einstandspreis = Marktwert minus Gewinn.
+    """
+    market_value = get_market_value(player)
+    profit = get_profit(player)
+
+    if market_value is None or profit is None:
+        return None
+
+    return market_value - profit
 
 
 def get_daily_change(player):
@@ -253,51 +264,11 @@ def is_in_lineup(player):
 
 
 # ---------------------------------------------------------
-# Suche in verschachtelten Antworten
+# Hilfsfunktion für die Datenansicht
 # ---------------------------------------------------------
 
-def search_keys(value, keys, depth=0):
-    """Sucht rekursiv nach dem ersten passenden Zahlenfeld."""
-    if depth > 5:
-        return None
-
-    if isinstance(value, dict):
-        for key in keys:
-            if key in value and value[key] is not None:
-                number = to_number(value[key])
-
-                if number is not None:
-                    return number
-
-        for nested_value in value.values():
-            result = search_keys(
-                nested_value,
-                keys,
-                depth + 1,
-            )
-
-            if result is not None:
-                return result
-
-    if isinstance(value, list):
-        for item in value:
-            result = search_keys(
-                item,
-                keys,
-                depth + 1,
-            )
-
-            if result is not None:
-                return result
-
-    return None
-
-
 def flatten_fields(value, prefix="", depth=0):
-    """
-    Wandelt eine verschachtelte Antwort in eine
-    flache Liste aus Feldpfad und Wert um.
-    """
+    """Wandelt verschachtelte Daten in eine flache Liste."""
     rows = []
 
     if depth > 4:
@@ -543,14 +514,7 @@ def extract_transfer_events(data, depth=0):
     amount = to_number(
         first_value(
             data,
-            [
-                "trp",
-                "price",
-                "pr",
-                "value",
-                "v",
-                "tp",
-            ],
+            ["trp", "price", "pr", "value", "v"],
         )
     )
 
@@ -706,7 +670,7 @@ def load_feed_transfers(api, league_id, manager_id):
                 }
             )
 
-    return realized, trades, purchases, raw_samples
+    return realized, trades, raw_samples
 
 
 # ---------------------------------------------------------
@@ -718,11 +682,11 @@ def style_player_table(frame):
     Färbt die Kadertabelle ein.
 
     Trading Spieler werden ausgegraut.
-    Positive Werte sind grün, negative rot.
+    Plus ist grün, Minus ist rot.
     """
 
     def color_row(row):
-        """Graut ganze Zeilen von Trading Spielern aus."""
+        """Graut Zeilen von Trading Spielern aus."""
         if row["Status"] == "Trading":
             return [
                 "color: #9a9a9a; "
@@ -849,14 +813,10 @@ selected_league = leagues[league_index]
 league_id = get_league_id(selected_league)
 league_name = get_league_name(selected_league)
 
-load_details = st.sidebar.checkbox(
-    "Spielerdetails laden",
-    value=True,
-)
-
 show_realized = st.sidebar.checkbox(
     "Realisierten Gewinn laden",
     value=True,
+    help="Liest die Transferhistorie. Dauert länger.",
 )
 
 st.title(f"⚽ {league_name}")
@@ -934,7 +894,6 @@ except Exception as error:
 
 realized_profit = None
 realized_trades = []
-feed_purchases = {}
 feed_samples = []
 
 if show_realized and players:
@@ -942,116 +901,12 @@ if show_realized and players:
         (
             realized_profit,
             realized_trades,
-            feed_purchases,
             feed_samples,
         ) = load_feed_transfers(
             api,
             league_id,
             selected_manager_id,
         )
-
-
-# ---------------------------------------------------------
-# Spielerdetails laden
-# ---------------------------------------------------------
-
-price_by_player = {}
-profit_by_player = {}
-detail_by_player = {}
-
-if load_details and players:
-    with st.spinner(
-        f"Details für {len(players)} Spieler …"
-    ):
-        for player in players:
-            player_id = get_player_id(player)
-
-            if player_id is None:
-                continue
-
-            try:
-                detail = api.get_player_detail(
-                    league_id,
-                    player_id,
-                )
-            except Exception:
-                continue
-
-            detail_by_player[player_id] = detail
-
-            profit = search_keys(
-                detail,
-                TOTAL_PROFIT_KEYS,
-            )
-
-            if profit is not None:
-                profit_by_player[player_id] = profit
-
-            price = search_keys(
-                detail,
-                BUY_PRICE_KEYS,
-            )
-
-            if price is not None:
-                price_by_player[player_id] = price
-
-
-# Kaufpreise aus dem Feed ergänzen
-for player in players:
-    player_id = get_player_id(player)
-
-    if player_id is None:
-        continue
-
-    if player_id in price_by_player:
-        continue
-
-    feed_prices = feed_purchases.get(player_id)
-
-    if feed_prices:
-        price_by_player[player_id] = feed_prices[-1]
-
-
-def player_buy_price(player):
-    """Gibt den Einstandspreis zurück."""
-    player_id = get_player_id(player)
-
-    if player_id in price_by_player:
-        return price_by_player[player_id]
-
-    direct = to_number(
-        first_value(player, BUY_PRICE_KEYS)
-    )
-
-    if direct is not None:
-        return direct
-
-    profit = profit_by_player.get(player_id)
-    market_value = get_market_value(player)
-
-    if profit is not None and market_value is not None:
-        return market_value - profit
-
-    return None
-
-
-def player_total_profit(player):
-    """Gibt den Gesamtgewinn zurück."""
-    player_id = get_player_id(player)
-
-    if player_id in profit_by_player:
-        return profit_by_player[player_id]
-
-    market_value = get_market_value(player)
-    buy_price = player_buy_price(player)
-
-    if market_value is None:
-        return None
-
-    if buy_price is not None:
-        return market_value - buy_price
-
-    return 0.0
 
 
 # ---------------------------------------------------------
@@ -1062,6 +917,7 @@ squad_value = 0.0
 lineup_value = 0.0
 trading_value = 0.0
 profit_in_club = 0.0
+buy_total = 0.0
 daily_change_total = 0.0
 
 lineup_count = 0
@@ -1071,12 +927,10 @@ for player in players:
     market_value = get_market_value(player) or 0.0
     squad_value += market_value
 
+    profit_in_club += get_profit(player) or 0.0
+    buy_total += get_buy_price(player) or 0.0
+
     daily_change_total += get_daily_change(player) or 0.0
-
-    profit = player_total_profit(player)
-
-    if profit is not None:
-        profit_in_club += profit
 
     if is_in_lineup(player):
         lineup_value += market_value
@@ -1101,7 +955,7 @@ row1_col1, row1_col2, row1_col3, row1_col4 = (
 row1_col1.metric(
     "Kaderwert",
     format_currency(squad_value),
-    help=f"{len(players)} Spieler",
+    help=f"Einstand: {format_currency(buy_total)}",
 )
 
 row1_col2.metric(
@@ -1196,14 +1050,14 @@ elif players:
         except (TypeError, ValueError):
             position_name = "Unbekannt"
 
-        slot = get_lineup_slot(player)
-
-        if slot is None:
-            status = "Trading"
-        else:
+        if is_in_lineup(player):
             status = "Start 11"
+            sort_status = 0
+        else:
+            status = "Trading"
+            sort_status = 1
 
-        profit = player_total_profit(player)
+        profit = get_profit(player)
 
         player_rows.append(
             {
@@ -1211,7 +1065,7 @@ elif players:
                 "Position": position_name,
                 "Status": status,
                 "Einstandspreis": format_currency(
-                    player_buy_price(player)
+                    get_buy_price(player)
                 ),
                 "Marktwert": format_currency(
                     get_market_value(player)
@@ -1224,9 +1078,7 @@ elif players:
                         get_daily_change(player)
                     )
                 ),
-                "_sort_status": 0
-                if status == "Start 11"
-                else 1,
+                "_sort_status": sort_status,
                 "_sort_profit": profit
                 if profit is not None
                 else -999_999_999,
@@ -1274,33 +1126,23 @@ if realized_trades:
 
 
 # ---------------------------------------------------------
-# Alle Spielerinformationen
+# Alle Daten zu einem Spieler
 # ---------------------------------------------------------
 
 st.markdown("---")
 
-st.subheader("🔬 Alle Daten zu einem Spieler")
+with st.expander("🔬 Alle Daten zu einem Spieler"):
+    if players:
+        inspect_index = st.selectbox(
+            "Spieler auswählen",
+            range(len(players)),
+            format_func=lambda index: get_player_name(
+                players[index]
+            ),
+        )
 
-if players:
-    inspect_index = st.selectbox(
-        "Spieler auswählen",
-        range(len(players)),
-        format_func=lambda index: get_player_name(
-            players[index]
-        ),
-    )
+        inspect_player = players[inspect_index]
 
-    inspect_player = players[inspect_index]
-    inspect_id = get_player_id(inspect_player)
-
-    tab_squad, tab_detail = st.tabs(
-        [
-            "Daten aus dem Kader",
-            "Daten aus der Detailansicht",
-        ]
-    )
-
-    with tab_squad:
         squad_fields = flatten_fields(inspect_player)
 
         if squad_fields:
@@ -1314,34 +1156,10 @@ if players:
         st.write("**Rohdaten:**")
         st.json(inspect_player)
 
-    with tab_detail:
-        detail = detail_by_player.get(inspect_id)
-
-        if detail is None:
-            st.info(
-                "Für diesen Spieler wurden keine "
-                "Detaildaten geladen."
-            )
-        else:
-            detail_fields = flatten_fields(detail)
-
-            if detail_fields:
-                st.dataframe(
-                    pd.DataFrame(detail_fields),
-                    use_container_width=True,
-                    hide_index=True,
-                    height=400,
-                )
-
-            st.write("**Rohdaten:**")
-            st.json(detail)
-
 
 # ---------------------------------------------------------
 # Diagnose
 # ---------------------------------------------------------
-
-st.markdown("---")
 
 with st.expander("🔎 Diagnose der Transferquellen"):
     if feed_samples:
