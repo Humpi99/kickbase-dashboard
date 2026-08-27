@@ -1,7 +1,7 @@
 """
 Kickbase Liga-Dashboard.
 
-KPIs: Mannschaft, Gewinn, Trend, weitere KPIs.
+Ansichten: Manager und Liga.
 """
 
 import pandas as pd
@@ -579,7 +579,7 @@ def extract_transfer_events(data, depth=0):
 
 
 def load_feed_transfers(api, league_id, manager_id):
-    """Berechnet den realisierten Gewinn."""
+    """Berechnet den realisierten Gewinn aus dem Feed."""
     events = []
     raw_samples = []
 
@@ -694,6 +694,80 @@ def load_feed_transfers(api, league_id, manager_id):
 
 
 # ---------------------------------------------------------
+# Kennzahlen eines Managers berechnen
+# ---------------------------------------------------------
+
+def compute_stats(players):
+    """Rechnet alle Kennzahlen aus einer Spielerliste."""
+    stats = {
+        "squad_value": 0.0,
+        "lineup_value": 0.0,
+        "trading_value": 0.0,
+        "buy_total": 0.0,
+        "buy_lineup": 0.0,
+        "buy_trading": 0.0,
+        "profit_in_club": 0.0,
+        "trend_total": 0.0,
+        "trend_lineup": 0.0,
+        "trend_trading": 0.0,
+        "lineup_count": 0,
+        "trading_count": 0,
+        "player_count": len(players),
+    }
+
+    for player in players:
+        market_value = get_market_value(player) or 0.0
+        buy_price = get_buy_price(player) or 0.0
+        daily_change = get_daily_change(player) or 0.0
+
+        stats["squad_value"] += market_value
+        stats["buy_total"] += buy_price
+        stats["profit_in_club"] += get_profit(player) or 0.0
+        stats["trend_total"] += daily_change
+
+        if is_in_lineup(player):
+            stats["lineup_value"] += market_value
+            stats["buy_lineup"] += buy_price
+            stats["trend_lineup"] += daily_change
+            stats["lineup_count"] += 1
+        else:
+            stats["trading_value"] += market_value
+            stats["buy_trading"] += buy_price
+            stats["trend_trading"] += daily_change
+            stats["trading_count"] += 1
+
+    return stats
+
+
+def load_manager_players(api, league_id, manager_id):
+    """Lädt die Spieler eines Managers, ohne Fehler zu werfen."""
+    try:
+        squad_result = api.get_manager_squad(
+            league_id,
+            manager_id,
+        )
+
+        return find_players_with_value(squad_result), None
+
+    except Exception as error:
+        return [], str(error)
+
+
+def load_realized_profit(api, league_id, manager_id):
+    """Liest den realisierten Gewinn aus dem Feld prft."""
+    try:
+        value, source = api.get_realized_profit(
+            league_id,
+            manager_id,
+        )
+
+        return value, source
+
+    except Exception:
+        return None, None
+
+
+# ---------------------------------------------------------
 # Farbgebung der Tabelle
 # ---------------------------------------------------------
 
@@ -746,6 +820,42 @@ def style_player_table(frame):
     return styled
 
 
+def style_league_table(frame):
+    """Färbt Gewinn- und Trendspalten der Liga-Tabelle."""
+
+    def color_change(value):
+        """Färbt Beträge grün oder rot."""
+        text = str(value)
+
+        if text.startswith("+"):
+            return (
+                f"color: {COLOR_POSITIVE}; "
+                "font-weight: 600"
+            )
+
+        if text.startswith("-"):
+            return (
+                f"color: {COLOR_NEGATIVE}; "
+                "font-weight: 600"
+            )
+
+        return ""
+
+    columns = [
+        "Gewinn gesamt",
+        "Trend Start 11",
+        "Trend Trading",
+        "Trend gesamt",
+    ]
+
+    present = [
+        column for column in columns
+        if column in frame.columns
+    ]
+
+    return frame.style.map(color_change, subset=present)
+
+
 # ---------------------------------------------------------
 # KPI-Blöcke
 # ---------------------------------------------------------
@@ -756,8 +866,6 @@ def kpi_block(title, entries):
 
     entries ist eine Liste aus Einträgen:
     (Beschriftung, Hauptwert, Zusatzzeilen, Farbe)
-    Zusatzzeilen ist eine Liste aus Texten.
-    Farbe ist "neutral", "plus" oder "minus".
     """
     colors = {
         "neutral": COLOR_NEUTRAL,
@@ -829,12 +937,7 @@ EXTRA_KPI_PLACEHOLDERS = [
 
 
 def build_extra_kpis():
-    """
-    Baut die Einträge für den vierten KPI-Block.
-
-    Solange keine Berechnung hinterlegt ist,
-    wird ein Platzhalter angezeigt.
-    """
+    """Baut die Einträge für den vierten KPI-Block."""
     entries = []
 
     for label, note in EXTRA_KPI_PLACEHOLDERS:
@@ -925,6 +1028,22 @@ if not st.session_state.get("logged_in"):
 
 
 # ---------------------------------------------------------
+# Ansicht wählen
+# ---------------------------------------------------------
+
+if "view" not in st.session_state:
+    st.session_state["view"] = "Manager"
+
+view = st.sidebar.radio(
+    "Ansicht",
+    ["Manager", "Liga"],
+    key="view",
+)
+
+st.sidebar.markdown("---")
+
+
+# ---------------------------------------------------------
 # Liga auswählen
 # ---------------------------------------------------------
 
@@ -949,7 +1068,6 @@ show_realized = st.sidebar.checkbox(
     help="Liest die Transferhistorie. Dauert länger.",
 )
 
-# NEU: steuert, ob die Kennzahlen aufgeklappt starten
 kpis_expanded = st.sidebar.checkbox(
     "Kennzahlen aufgeklappt starten",
     value=False,
@@ -985,18 +1103,174 @@ if not managers:
 
     st.stop()
 
+manager_ids = [
+    get_manager_id(manager) for manager in managers
+]
+
 
 # ---------------------------------------------------------
-# Manager auswählen
+# Ansicht Liga
 # ---------------------------------------------------------
+
+if view == "Liga":
+    st.subheader("Liga-Vergleich aller Manager")
+
+    st.caption(
+        "Ein Klick auf eine Zeile öffnet die "
+        "Detailansicht des Managers."
+    )
+
+    cache_key = f"league_rows_{league_id}"
+
+    if st.button("Daten neu laden"):
+        st.session_state.pop(cache_key, None)
+
+    if cache_key not in st.session_state:
+        rows = []
+
+        progress = st.progress(
+            0.0,
+            text="Kader werden geladen …",
+        )
+
+        for index, manager in enumerate(managers):
+            manager_id = get_manager_id(manager)
+            manager_name = get_manager_name(manager)
+
+            players, _ = load_manager_players(
+                api,
+                league_id,
+                manager_id,
+            )
+
+            stats = compute_stats(players)
+
+            realized, _ = load_realized_profit(
+                api,
+                league_id,
+                manager_id,
+            )
+
+            realized_value = realized or 0.0
+
+            total_profit = (
+                stats["profit_in_club"] + realized_value
+            )
+
+            rows.append(
+                {
+                    "Manager": manager_name,
+                    "Start 11": format_currency(
+                        stats["lineup_value"]
+                    ),
+                    "Trading": format_currency(
+                        stats["trading_value"]
+                    ),
+                    "Kaderwert": format_currency(
+                        stats["squad_value"]
+                    ),
+                    "Spieler": stats["player_count"],
+                    "Gewinn gesamt": (
+                        format_signed_currency(
+                            total_profit
+                        )
+                    ),
+                    "Trend Start 11": (
+                        format_signed_currency(
+                            stats["trend_lineup"]
+                        )
+                    ),
+                    "Trend Trading": (
+                        format_signed_currency(
+                            stats["trend_trading"]
+                        )
+                    ),
+                    "Trend gesamt": (
+                        format_signed_currency(
+                            stats["trend_total"]
+                        )
+                    ),
+                    "_sort": stats["squad_value"],
+                }
+            )
+
+            progress.progress(
+                (index + 1) / len(managers),
+                text=f"Kader werden geladen … "
+                     f"{index + 1} von {len(managers)}",
+            )
+
+        progress.empty()
+
+        st.session_state[cache_key] = rows
+
+    rows = st.session_state[cache_key]
+
+    league_frame = pd.DataFrame(rows)
+
+    league_frame = league_frame.sort_values(
+        "_sort",
+        ascending=False,
+    ).reset_index(drop=True)
+
+    sorted_names = league_frame["Manager"].tolist()
+
+    league_frame = league_frame.drop(columns=["_sort"])
+
+    selection = st.dataframe(
+        style_league_table(league_frame),
+        use_container_width=True,
+        hide_index=True,
+        height=table_height(len(league_frame)),
+        on_select="rerun",
+        selection_mode="single-row",
+        key="league_table",
+    )
+
+    selected_rows = (
+        selection.selection.rows
+        if selection is not None
+        else []
+    )
+
+    if selected_rows:
+        chosen_name = sorted_names[selected_rows[0]]
+
+        for index, manager in enumerate(managers):
+            if get_manager_name(manager) == chosen_name:
+                st.session_state[
+                    "selected_manager_index"
+                ] = index
+                break
+
+        st.session_state["view"] = "Manager"
+        st.rerun()
+
+    st.stop()
+
+
+# ---------------------------------------------------------
+# Ansicht Manager
+# ---------------------------------------------------------
+
+default_index = st.session_state.get(
+    "selected_manager_index",
+    0,
+)
+
+if default_index >= len(managers):
+    default_index = 0
 
 manager_index = st.selectbox(
     "👤 Manager auswählen",
     range(len(managers)),
+    index=default_index,
     format_func=lambda index: get_manager_name(
         managers[index]
     ),
 )
+
+st.session_state["selected_manager_index"] = manager_index
 
 selected_manager = managers[manager_index]
 selected_manager_id = get_manager_id(selected_manager)
@@ -1009,20 +1283,12 @@ selected_manager_name = get_manager_name(
 # Kader laden
 # ---------------------------------------------------------
 
-players = []
-squad_error = None
-
-try:
-    with st.spinner("Kader wird geladen …"):
-        squad_result = api.get_manager_squad(
-            league_id,
-            selected_manager_id,
-        )
-
-    players = find_players_with_value(squad_result)
-
-except Exception as error:
-    squad_error = str(error)
+with st.spinner("Kader wird geladen …"):
+    players, squad_error = load_manager_players(
+        api,
+        league_id,
+        selected_manager_id,
+    )
 
 
 # ---------------------------------------------------------
@@ -1053,7 +1319,8 @@ prft_source = None
 
 if players:
     with st.spinner("Realisierter Gewinn wird gelesen …"):
-        prft_value, prft_source = api.get_realized_profit(
+        prft_value, prft_source = load_realized_profit(
+            api,
             league_id,
             selected_manager_id,
         )
@@ -1071,48 +1338,14 @@ else:
 # Kennzahlen berechnen
 # ---------------------------------------------------------
 
-squad_value = 0.0
-lineup_value = 0.0
-trading_value = 0.0
+stats = compute_stats(players)
 
-buy_total = 0.0
-buy_lineup = 0.0
-buy_trading = 0.0
-
-profit_in_club = 0.0
-
-daily_change_total = 0.0
-daily_change_lineup = 0.0
-daily_change_trading = 0.0
-
-lineup_count = 0
-trading_count = 0
-
-for player in players:
-    market_value = get_market_value(player) or 0.0
-    buy_price = get_buy_price(player) or 0.0
-    daily_change = get_daily_change(player) or 0.0
-
-    squad_value += market_value
-    buy_total += buy_price
-    profit_in_club += get_profit(player) or 0.0
-    daily_change_total += daily_change
-
-    if is_in_lineup(player):
-        lineup_value += market_value
-        buy_lineup += buy_price
-        daily_change_lineup += daily_change
-        lineup_count += 1
-    else:
-        trading_value += market_value
-        buy_trading += buy_price
-        daily_change_trading += daily_change
-        trading_count += 1
-
-total_profit = profit_in_club
+total_profit = stats["profit_in_club"]
 
 if realized_profit is not None:
-    total_profit = profit_in_club + realized_profit
+    total_profit = (
+        stats["profit_in_club"] + realized_profit
+    )
 
 
 # ---------------------------------------------------------
@@ -1123,44 +1356,42 @@ with st.expander(
     f"Kennzahlen: {selected_manager_name}",
     expanded=kpis_expanded,
 ):
-    # Block 1: Mannschaft
     kpi_block(
         "Mannschaft",
         [
             (
                 "Start 11",
-                format_currency(lineup_value),
+                format_currency(stats["lineup_value"]),
                 [
                     f"Einstand: "
-                    f"{format_currency(buy_lineup)}",
-                    f"{lineup_count} Spieler",
+                    f"{format_currency(stats['buy_lineup'])}",
+                    f"{stats['lineup_count']} Spieler",
                 ],
                 "neutral",
             ),
             (
                 "Trading",
-                format_currency(trading_value),
+                format_currency(stats["trading_value"]),
                 [
                     f"Einstand: "
-                    f"{format_currency(buy_trading)}",
-                    f"{trading_count} Spieler",
+                    f"{format_currency(stats['buy_trading'])}",
+                    f"{stats['trading_count']} Spieler",
                 ],
                 "neutral",
             ),
             (
                 "Gesamt",
-                format_currency(squad_value),
+                format_currency(stats["squad_value"]),
                 [
                     f"Einstand: "
-                    f"{format_currency(buy_total)}",
-                    f"{len(players)} Spieler",
+                    f"{format_currency(stats['buy_total'])}",
+                    f"{stats['player_count']} Spieler",
                 ],
                 "neutral",
             ),
         ],
     )
 
-    # Block 2: Gewinn
     kpi_block(
         "Gewinn",
         [
@@ -1174,9 +1405,11 @@ with st.expander(
             ),
             (
                 "im Verein",
-                format_signed_currency(profit_in_club),
+                format_signed_currency(
+                    stats["profit_in_club"]
+                ),
                 ["aus Marktwertsteigerung"],
-                tone_of(profit_in_club),
+                tone_of(stats["profit_in_club"]),
             ),
             (
                 "Gesamt",
@@ -1187,38 +1420,36 @@ with st.expander(
         ],
     )
 
-    # Block 3: Trend der letzten 24 Stunden
     kpi_block(
         "Trend",
         [
             (
                 "Start 11",
                 format_signed_currency(
-                    daily_change_lineup
+                    stats["trend_lineup"]
                 ),
                 ["letzte 24 Stunden"],
-                tone_of(daily_change_lineup),
+                tone_of(stats["trend_lineup"]),
             ),
             (
                 "Trading",
                 format_signed_currency(
-                    daily_change_trading
+                    stats["trend_trading"]
                 ),
                 ["letzte 24 Stunden"],
-                tone_of(daily_change_trading),
+                tone_of(stats["trend_trading"]),
             ),
             (
                 "Gesamt",
                 format_signed_currency(
-                    daily_change_total
+                    stats["trend_total"]
                 ),
                 ["letzte 24 Stunden"],
-                tone_of(daily_change_total),
+                tone_of(stats["trend_total"]),
             ),
         ],
     )
 
-    # Block 4: Platzhalter für weitere KPIs
     kpi_block(
         "Weitere KPIs",
         build_extra_kpis(),
