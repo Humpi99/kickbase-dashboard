@@ -5,6 +5,8 @@ Ansichten: Manager und Liga.
 Optimiert fuer Desktop und Handy.
 """
 
+from datetime import datetime, timezone
+
 import pandas as pd
 import streamlit as st
 
@@ -20,6 +22,9 @@ COLOR_NEGATIVE = "#e03131"
 COLOR_NEUTRAL = "#1c1c1c"
 COLOR_LABEL = "#8a8a8a"
 COLOR_LINE = "#e6e6e6"
+
+# Startbudget jedes Managers zu Saisonbeginn
+DEFAULT_START_BUDGET = 150_000_000
 
 
 # ---------------------------------------------------------
@@ -346,6 +351,111 @@ def get_lineup_slot(player):
 def is_in_lineup(player):
     """Prüft, ob ein Spieler in der Startelf steht."""
     return get_lineup_slot(player) is not None
+
+
+# ---------------------------------------------------------
+# Spieltag ermitteln
+# ---------------------------------------------------------
+
+# Feldnamen, unter denen ein Spieltagsdatum liegen koennte
+MATCHDAY_DATE_KEYS = [
+    "dt",
+    "date",
+    "startDate",
+    "kickoff",
+    "md",
+    "mdst",
+    "deadline",
+]
+
+
+def parse_date_text(text):
+    """Wandelt einen Datumstext in ein Datum um."""
+    if not isinstance(text, str) or len(text) < 8:
+        return None
+
+    cleaned = text.replace("Z", "+00:00")
+
+    try:
+        parsed = datetime.fromisoformat(cleaned)
+    except ValueError:
+        return None
+
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+
+    return parsed
+
+
+def collect_future_dates(data, depth=0):
+    """Sammelt alle Datumsangaben, die in der Zukunft liegen."""
+    found = []
+
+    if depth > 6:
+        return found
+
+    now = datetime.now(timezone.utc)
+
+    if isinstance(data, dict):
+        for key, value in data.items():
+            if key in MATCHDAY_DATE_KEYS:
+                parsed = parse_date_text(value)
+
+                if parsed is not None and parsed > now:
+                    found.append(parsed)
+
+            found.extend(
+                collect_future_dates(value, depth + 1)
+            )
+
+    if isinstance(data, list):
+        for item in data:
+            found.extend(
+                collect_future_dates(item, depth + 1)
+            )
+
+    return found
+
+
+def find_days_to_matchday(api, league_id):
+    """
+    Sucht das naechste Spieltagsdatum in der API.
+
+    Rueckgabe: (tage, quelle). Beide None, wenn
+    nichts gefunden wurde.
+    """
+    paths = [
+        f"/v4/leagues/{league_id}/matchdays",
+        f"/v4/leagues/{league_id}/matchday",
+        "/v4/competitions/1/matchdays",
+        "/v4/competitions/1/matchday",
+        "/v4/matchdays",
+        f"/v4/leagues/{league_id}/season",
+    ]
+
+    now = datetime.now(timezone.utc)
+
+    for path in paths:
+        try:
+            data = api.get(path)
+        except Exception:
+            continue
+
+        dates = collect_future_dates(data)
+
+        if not dates:
+            continue
+
+        next_date = min(dates)
+
+        days = (next_date - now).days
+
+        if days < 0:
+            days = 0
+
+        return days, path
+
+    return None, None
 
 
 # ---------------------------------------------------------
@@ -798,6 +908,37 @@ def compute_stats(players):
     return stats
 
 
+def compute_budget(stats, total_profit, start_budget,
+                   days_to_matchday):
+    """
+    Schaetzt das Budget eines Managers.
+
+    Kontostand   = Startbudget + Gewinn gesamt
+                   minus Kaderwert gesamt
+    Nach Verkauf = Kontostand plus Marktwert Trading
+    Am Spieltag  = Nach Verkauf plus Trend Trading
+                   mal Tage bis Spieltag
+    """
+    balance = (
+        start_budget
+        + total_profit
+        - stats["squad_value"]
+    )
+
+    after_sale = balance + stats["trading_value"]
+
+    at_matchday = (
+        after_sale
+        + stats["trend_trading"] * days_to_matchday
+    )
+
+    return {
+        "balance": balance,
+        "after_sale": after_sale,
+        "at_matchday": at_matchday,
+    }
+
+
 def load_manager_players(api, league_id, manager_id):
     """Lädt die Spieler eines Managers ohne Fehlerabbruch."""
     try:
@@ -910,6 +1051,9 @@ def style_league_table(frame):
             "Trend Start 11",
             "Trend Trading",
             "Trend gesamt",
+            "Kontostand",
+            "Nach Verkauf",
+            "Am Spieltag",
         ]
         if column in frame.columns
     ]
@@ -1035,35 +1179,42 @@ def tone_of(value):
     return "plus" if number > 0 else "minus"
 
 
-# ---------------------------------------------------------
-# Platzhalter für den vierten KPI-Block
-# ---------------------------------------------------------
-
-# Hier tragen wir spaeter die echten Berechnungen ein.
-# Aufbau je Eintrag: (Beschriftung, Hinweistext)
-
-EXTRA_KPI_PLACEHOLDERS = [
-    ("KPI 1", "Berechnung folgt"),
-    ("KPI 2", "Berechnung folgt"),
-    ("KPI 3", "Berechnung folgt"),
-]
-
-
-def build_extra_kpis():
-    """Baut die Einträge für den vierten KPI-Block."""
-    entries = []
-
-    for label, note in EXTRA_KPI_PLACEHOLDERS:
-        entries.append(
-            (
-                label,
-                "—",
-                [note],
-                "neutral",
-            )
-        )
-
-    return entries
+def build_budget_kpis(budget, stats, start_budget,
+                      days_to_matchday, days_source):
+    """Baut die Einträge für den Budget-Block."""
+    return [
+        (
+            "Kontostand",
+            format_signed_currency(budget["balance"]),
+            [
+                f"Start: {format_currency(start_budget)}",
+                "plus Gewinn, minus Kaderwert",
+            ],
+            tone_of(budget["balance"]),
+        ),
+        (
+            "Nach Verkauf",
+            format_signed_currency(budget["after_sale"]),
+            [
+                f"plus Trading: "
+                f"{format_currency(stats['trading_value'])}",
+                f"{stats['trading_count']} Spieler",
+            ],
+            tone_of(budget["after_sale"]),
+        ),
+        (
+            "Am Spieltag",
+            format_signed_currency(budget["at_matchday"]),
+            [
+                f"{days_to_matchday} Tage "
+                f"({days_source})",
+                f"Trend Trading: "
+                f"{format_signed_currency(stats['trend_trading'])}"
+                f" pro Tag",
+            ],
+            tone_of(budget["at_matchday"]),
+        ),
+    ]
 
 
 # ---------------------------------------------------------
@@ -1132,7 +1283,6 @@ st.markdown(
         .kpi-title {
             margin-top: 14px !important;
         }
-        /* KPI-Spalten untereinander stapeln */
         div[data-testid="stHorizontalBlock"] {
             flex-direction: column !important;
             gap: 0.2rem !important;
@@ -1143,7 +1293,6 @@ st.markdown(
             flex: 1 1 100% !important;
             min-width: 100% !important;
         }
-        /* Tabellen kompakter */
         div[data-testid="stDataFrame"] {
             font-size: 12px !important;
         }
@@ -1298,6 +1447,72 @@ kpis_expanded = st.sidebar.checkbox(
     help="Aus bedeutet: Mannschaft steht sofort im Fokus.",
 )
 
+
+# ---------------------------------------------------------
+# Budget-Einstellungen
+# ---------------------------------------------------------
+
+st.sidebar.markdown("---")
+
+st.sidebar.markdown(
+    f"<div style='font-size:12px;font-weight:500;"
+    f"letter-spacing:0.08em;text-transform:uppercase;"
+    f"color:{COLOR_LABEL};margin-bottom:8px;'>"
+    f"Budget</div>",
+    unsafe_allow_html=True,
+)
+
+start_budget_mio = st.sidebar.number_input(
+    "Startbudget in Mio. €",
+    min_value=0.0,
+    max_value=500.0,
+    value=DEFAULT_START_BUDGET / 1_000_000,
+    step=5.0,
+    help="Betrag, mit dem jeder Manager gestartet ist.",
+)
+
+start_budget = start_budget_mio * 1_000_000
+
+# Tage bis zum Spieltag aus der API suchen
+matchday_key = f"matchday_days_{league_id}"
+
+if matchday_key not in st.session_state:
+    with st.spinner("Spieltag wird gesucht …"):
+        found_days, found_path = find_days_to_matchday(
+            api,
+            league_id,
+        )
+
+    st.session_state[matchday_key] = (
+        found_days,
+        found_path,
+    )
+
+found_days, found_path = st.session_state[matchday_key]
+
+if found_days is None:
+    default_days = 3
+    days_hint = "kein Endpunkt gefunden, bitte selbst setzen"
+else:
+    default_days = found_days
+    days_hint = f"gefunden über {found_path}"
+
+days_to_matchday = st.sidebar.number_input(
+    "Tage bis zum Spieltag",
+    min_value=0,
+    max_value=30,
+    value=int(default_days),
+    step=1,
+    help=days_hint,
+)
+
+if found_days is not None and days_to_matchday == found_days:
+    days_source = "aus der API"
+else:
+    days_source = "manuell"
+
+st.sidebar.caption(days_hint)
+
 st.sidebar.markdown("---")
 
 if st.sidebar.button("Abmelden", key="logout"):
@@ -1355,7 +1570,7 @@ if view == "Liga":
 
     # Neuer Schluessel, damit alte Textwerte
     # aus frueheren Versionen verworfen werden.
-    cache_key = f"league_rows_v2_{league_id}"
+    cache_key = f"league_rows_v3_{league_id}"
 
     if st.button("Daten neu laden"):
         st.session_state.pop(cache_key, None)
@@ -1423,11 +1638,28 @@ if view == "Liga":
 
     league_frame = pd.DataFrame(rows)
 
-    # Alte Hilfsspalte aus frueheren Versionen entfernen
     if "_sort" in league_frame.columns:
         league_frame = league_frame.drop(
             columns=["_sort"]
         )
+
+    # Budget je Manager ergaenzen
+    league_frame["Kontostand"] = (
+        start_budget
+        + league_frame["Gewinn gesamt"]
+        - league_frame["Kaderwert"]
+    )
+
+    league_frame["Nach Verkauf"] = (
+        league_frame["Kontostand"]
+        + league_frame["Trading"]
+    )
+
+    league_frame["Am Spieltag"] = (
+        league_frame["Nach Verkauf"]
+        + league_frame["Trend Trading"]
+        * days_to_matchday
+    )
 
     if compact:
         visible_columns = [
@@ -1435,6 +1667,7 @@ if view == "Liga":
             "Kaderwert",
             "Gewinn gesamt",
             "Trend gesamt",
+            "Kontostand",
         ]
     else:
         visible_columns = [
@@ -1447,6 +1680,9 @@ if view == "Liga":
             "Trend Start 11",
             "Trend Trading",
             "Trend gesamt",
+            "Kontostand",
+            "Nach Verkauf",
+            "Am Spieltag",
         ]
 
     league_frame = league_frame[
@@ -1474,6 +1710,12 @@ if view == "Liga":
         on_select="rerun",
         selection_mode="single-row",
         key="league_table",
+    )
+
+    st.caption(
+        f"Budget geschätzt mit "
+        f"{format_currency(start_budget)} Startbudget "
+        f"und {days_to_matchday} Tagen bis zum Spieltag."
     )
 
     selected_rows = []
@@ -1605,6 +1847,13 @@ if realized_profit is not None:
         stats["profit_in_club"] + realized_profit
     )
 
+budget = compute_budget(
+    stats,
+    total_profit,
+    start_budget,
+    days_to_matchday,
+)
+
 
 # ---------------------------------------------------------
 # KPI-Anzeige, einklappbar
@@ -1717,8 +1966,14 @@ with st.expander(
     )
 
     kpi_block(
-        "Weitere KPIs",
-        build_extra_kpis(),
+        "Budget geschätzt",
+        build_budget_kpis(
+            budget,
+            stats,
+            start_budget,
+            days_to_matchday,
+            days_source,
+        ),
         compact=compact,
     )
 
