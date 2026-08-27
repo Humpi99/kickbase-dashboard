@@ -708,10 +708,20 @@ st.subheader(f"Kader von {selected_manager_name}")
 
 try:
     with st.spinner("Kader wird geladen …"):
-        player_result = api.get_user_players(
-            league_id,
-            selected_user_id,
-        )
+        day_number = st.number_input(
+    "Spieltag",
+    min_value=1,
+    max_value=34,
+    value=1,
+    step=1,
+)
+
+with st.spinner("Kader wird geladen …"):
+    player_result = api.get_user_players(
+        league_id,
+        selected_user_id,
+        day_number=int(day_number),
+    )
 
     players = find_players(player_result)
 
