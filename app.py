@@ -70,9 +70,20 @@ if login_button and email and password:
 
         # Daten in Session speichern (bleibt erhalten beim Neuladen)
         st.session_state["api"] = api
-        st.session_state["user"] = result.get("user", {})
-        st.session_state["leagues"] = result.get("leagues", [])
-        st.session_state["logged_in"] = True
+st.session_state["user"] = (
+    result.get("user")
+    or result.get("u")
+    or {}
+)
+
+st.session_state["leagues"] = (
+    result.get("leagues")
+    or result.get("lgs")
+    or result.get("ls")
+    or []
+)
+
+st.session_state["logged_in"] = True
 
         st.sidebar.success("✅ Erfolgreich eingeloggt!")
     except Exception as e:
