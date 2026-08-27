@@ -677,12 +677,20 @@ def load_feed_transfers(api, league_id, manager_id):
 # Farbgebung der Tabelle
 # ---------------------------------------------------------
 
+# Dezente Farbtoene fuer die gesamte Anwendung
+COLOR_POSITIVE = "#4a7c59"
+COLOR_NEGATIVE = "#a35c5c"
+COLOR_NEUTRAL = "#2c2c2c"
+COLOR_LABEL = "#8a8a8a"
+COLOR_LINE = "#e6e6e6"
+
+
 def style_player_table(frame):
     """
     Färbt die Kadertabelle ein.
 
     Trading Spieler werden ausgegraut.
-    Plus ist grün, Minus ist rot.
+    Plus und Minus werden dezent eingefärbt.
     """
 
     def color_row(row):
@@ -690,20 +698,20 @@ def style_player_table(frame):
         if row["Status"] == "Trading":
             return [
                 "color: #9a9a9a; "
-                "background-color: #f5f5f5"
+                "background-color: #f7f7f7"
             ] * len(row)
 
         return [""] * len(row)
 
     def color_change(value):
-        """Färbt Beträge grün oder rot."""
+        """Färbt Beträge dezent grün oder rot."""
         text = str(value)
 
         if text.startswith("+"):
-            return "color: #1a8f3c; font-weight: 600"
+            return f"color: {COLOR_POSITIVE}"
 
         if text.startswith("-"):
-            return "color: #c62828; font-weight: 600"
+            return f"color: {COLOR_NEGATIVE}"
 
         return ""
 
@@ -721,7 +729,7 @@ def style_player_table(frame):
 
 
 # ---------------------------------------------------------
-# NEU: KPI-Blöcke wie in der Kickbase-Ansicht
+# KPI-Blöcke, dezent gestaltet
 # ---------------------------------------------------------
 
 def kpi_block(title, entries):
@@ -729,45 +737,50 @@ def kpi_block(title, entries):
     Zeigt einen KPI-Block mit Überschrift und drei Spalten.
 
     entries ist eine Liste aus drei Einträgen:
-    (Beschriftung, Hauptwert, Zusatzzeile, Farbe)
+    (Beschriftung, Hauptwert, Zusatzzeilen, Farbe)
+    Zusatzzeilen ist eine Liste aus Texten.
     Farbe ist "neutral", "plus" oder "minus".
     """
     colors = {
-        "neutral": "#111111",
-        "plus": "#1a8f3c",
-        "minus": "#c62828",
+        "neutral": COLOR_NEUTRAL,
+        "plus": COLOR_POSITIVE,
+        "minus": COLOR_NEGATIVE,
     }
 
     st.markdown(
-        f"<div style='border-top:3px solid #1a8f3c;"
-        f"padding-top:6px;margin-top:18px;"
-        f"font-size:15px;font-weight:700;"
-        f"color:#444444;'>{title}</div>",
+        f"<div style='border-top:1px solid {COLOR_LINE};"
+        f"padding-top:10px;margin-top:22px;"
+        f"font-size:12px;font-weight:500;"
+        f"letter-spacing:0.08em;text-transform:uppercase;"
+        f"color:{COLOR_LABEL};'>{title}</div>",
         unsafe_allow_html=True,
     )
 
     columns = st.columns(3)
 
     for column, entry in zip(columns, entries):
-        label, value, note, tone = entry
+        label, value, notes, tone = entry
 
-        color = colors.get(tone, colors["neutral"])
+        color = colors.get(tone, COLOR_NEUTRAL)
 
-        note_html = ""
+        notes_html = ""
 
-        if note:
-            note_html = (
-                f"<div style='font-size:13px;"
-                f"color:#888888;'>{note}</div>"
-            )
+        for note in notes:
+            if note:
+                notes_html += (
+                    f"<div style='font-size:12px;"
+                    f"color:{COLOR_LABEL};"
+                    f"line-height:1.5;'>{note}</div>"
+                )
 
         column.markdown(
-            f"<div style='padding:10px 0 4px 0;'>"
-            f"<div style='font-size:13px;"
-            f"color:#888888;'>{label}</div>"
-            f"<div style='font-size:22px;font-weight:700;"
-            f"color:{color};'>{value}</div>"
-            f"{note_html}"
+            f"<div style='padding:8px 0 2px 0;'>"
+            f"<div style='font-size:12px;"
+            f"color:{COLOR_LABEL};'>{label}</div>"
+            f"<div style='font-size:21px;font-weight:600;"
+            f"color:{color};padding:2px 0 4px 0;'>"
+            f"{value}</div>"
+            f"{notes_html}"
             f"</div>",
             unsafe_allow_html=True,
         )
@@ -1000,8 +1013,12 @@ else:
 squad_value = 0.0
 lineup_value = 0.0
 trading_value = 0.0
-profit_in_club = 0.0
+
 buy_total = 0.0
+buy_lineup = 0.0
+buy_trading = 0.0
+
+profit_in_club = 0.0
 
 daily_change_total = 0.0
 daily_change_lineup = 0.0
@@ -1012,20 +1029,22 @@ trading_count = 0
 
 for player in players:
     market_value = get_market_value(player) or 0.0
-    squad_value += market_value
-
-    profit_in_club += get_profit(player) or 0.0
-    buy_total += get_buy_price(player) or 0.0
-
+    buy_price = get_buy_price(player) or 0.0
     daily_change = get_daily_change(player) or 0.0
+
+    squad_value += market_value
+    buy_total += buy_price
+    profit_in_club += get_profit(player) or 0.0
     daily_change_total += daily_change
 
     if is_in_lineup(player):
         lineup_value += market_value
+        buy_lineup += buy_price
         daily_change_lineup += daily_change
         lineup_count += 1
     else:
         trading_value += market_value
+        buy_trading += buy_price
         daily_change_trading += daily_change
         trading_count += 1
 
@@ -1040,29 +1059,38 @@ if realized_profit is not None:
 # ---------------------------------------------------------
 
 st.subheader(
-    f"📊 Kennzahlen: {selected_manager_name}"
+    f"Kennzahlen: {selected_manager_name}"
 )
 
-# Block 1: Mannschaft
+# Block 1: Mannschaft mit Marktwert und Einstandspreis
 kpi_block(
     "Mannschaft",
     [
         (
             "Start 11",
             format_currency(lineup_value),
-            f"{lineup_count} Spieler",
+            [
+                f"Einstand: {format_currency(buy_lineup)}",
+                f"{lineup_count} Spieler",
+            ],
             "neutral",
         ),
         (
             "Trading",
             format_currency(trading_value),
-            f"{trading_count} Spieler",
+            [
+                f"Einstand: {format_currency(buy_trading)}",
+                f"{trading_count} Spieler",
+            ],
             "neutral",
         ),
         (
             "Gesamt",
             format_currency(squad_value),
-            f"{len(players)} Spieler",
+            [
+                f"Einstand: {format_currency(buy_total)}",
+                f"{len(players)} Spieler",
+            ],
             "neutral",
         ),
     ],
@@ -1077,19 +1105,19 @@ kpi_block(
             format_signed_currency(realized_profit)
             if realized_profit is not None
             else "—",
-            realized_note,
+            [realized_note],
             tone_of(realized_profit),
         ),
         (
             "im Verein",
             format_signed_currency(profit_in_club),
-            f"Einstand: {format_currency(buy_total)}",
+            ["aus Marktwertsteigerung"],
             tone_of(profit_in_club),
         ),
         (
             "Gesamt",
             format_signed_currency(total_profit),
-            "realisiert plus im Verein",
+            ["realisiert plus im Verein"],
             tone_of(total_profit),
         ),
     ],
@@ -1102,19 +1130,19 @@ kpi_block(
         (
             "Start 11",
             format_signed_currency(daily_change_lineup),
-            "letzte 24 Stunden",
+            ["letzte 24 Stunden"],
             tone_of(daily_change_lineup),
         ),
         (
             "Trading",
             format_signed_currency(daily_change_trading),
-            "letzte 24 Stunden",
+            ["letzte 24 Stunden"],
             tone_of(daily_change_trading),
         ),
         (
             "Gesamt",
             format_signed_currency(daily_change_total),
-            "letzte 24 Stunden",
+            ["letzte 24 Stunden"],
             tone_of(daily_change_total),
         ),
     ],
@@ -1128,7 +1156,7 @@ st.markdown("")
 # ---------------------------------------------------------
 
 st.subheader(
-    f"📋 Kader von {selected_manager_name}"
+    f"Kader von {selected_manager_name}"
 )
 
 if squad_error:
@@ -1214,8 +1242,7 @@ elif players:
     )
 
     st.caption(
-        "Trading Spieler sind ausgegraut. "
-        "Grün bedeutet Plus, rot bedeutet Minus."
+        "Trading Spieler sind ausgegraut."
     )
 
 else:
@@ -1227,7 +1254,7 @@ else:
 # ---------------------------------------------------------
 
 if realized_trades:
-    st.subheader("💸 Verkaufte Spieler")
+    st.subheader("Verkaufte Spieler")
 
     st.dataframe(
         pd.DataFrame(realized_trades),
@@ -1240,9 +1267,7 @@ if realized_trades:
 # Alle Daten zu einem Spieler
 # ---------------------------------------------------------
 
-st.markdown("---")
-
-with st.expander("🔬 Alle Daten zu einem Spieler"):
+with st.expander("Alle Daten zu einem Spieler"):
     if players:
         inspect_index = st.selectbox(
             "Spieler auswählen",
@@ -1272,9 +1297,7 @@ with st.expander("🔬 Alle Daten zu einem Spieler"):
 # Alle Daten zu einem Manager
 # ---------------------------------------------------------
 
-st.markdown("---")
-
-st.subheader("🗂️ Alle Daten zu diesem Manager")
+st.subheader("Alle Daten zu diesem Manager")
 
 st.write(
     "Hier werden alle bekannten Manager-Endpunkte "
@@ -1360,9 +1383,7 @@ if manager_errors:
 # Diagnose der Transferquellen
 # ---------------------------------------------------------
 
-st.markdown("---")
-
-with st.expander("🔎 Diagnose der Transferquellen"):
+with st.expander("Diagnose der Transferquellen"):
     if feed_samples:
         for sample in feed_samples:
             with st.expander(sample["Quelle"]):
