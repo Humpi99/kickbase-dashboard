@@ -138,7 +138,7 @@ class KickbaseAPI:
         return results, errors
 
     def get_ranking(self, league_id):
-        """Lädt das Liga-Ranking mit den Kaderwerten."""
+        """Lädt das Liga-Ranking."""
         paths = [
             f"/v4/leagues/{league_id}/ranking",
         ]
@@ -149,9 +149,7 @@ class KickbaseAPI:
         """
         Lädt den Kader EINES bestimmten Managers.
 
-        Wichtig: Nur dieser Pfad liefert fremde Kader.
-        Der Pfad ohne Manager-ID gibt immer das
-        eigene Team zurück.
+        Nur dieser Pfad liefert fremde Kader.
         """
         path = (
             f"/v4/leagues/{league_id}"
@@ -164,7 +162,7 @@ class KickbaseAPI:
         """
         Lädt Zusatzdaten eines Managers.
 
-        Enthält je nach Liga auch Transferdaten.
+        Kann Aufstellung und Transferdaten enthalten.
         """
         paths = [
             f"/v4/leagues/{league_id}"
@@ -176,6 +174,22 @@ class KickbaseAPI:
         ]
 
         return self.try_paths(paths)
+
+    def get_league_feed(self, league_id, start=0):
+        """
+        Lädt eine Seite des Liga-Feeds.
+
+        Der Feed enthält Käufe und Verkäufe.
+        """
+        paths = [
+            f"/v4/leagues/{league_id}/activitiesFeed",
+            f"/v4/leagues/{league_id}/feed",
+        ]
+
+        return self.try_paths(
+            paths,
+            params={"start": start, "max": 25},
+        )
 
     def get_market(self, league_id):
         """Lädt den Transfermarkt."""
