@@ -419,11 +419,43 @@ if not st.session_state.get("logged_in"):
                 user = extract_user(login_result)
                 leagues = extract_leagues(login_result)
 
-                if not leagues:
-                    st.sidebar.error(
-                        "Die Anmeldung hat funktioniert, aber in der "
-                        "Antwort wurden keine Ligen gefunden."
-                    )
+               if not leagues:
+    st.sidebar.error(
+        "Die Anmeldung hat funktioniert, aber in der "
+        "Antwort wurden keine Ligen gefunden."
+    )
+
+    # Zeigt nur die Feldnamen, niemals Passwort oder Tokenwerte.
+    sichere_feldnamen = [
+        key for key in login_result.keys()
+        if key not in ("tkn", "token")
+    ]
+
+    st.write("Felder der Kickbase-Antwort:")
+    st.code(", ".join(sichere_feldnamen))
+
+    with st.expander("Struktur der Antwort untersuchen"):
+        struktur = {}
+
+        for key, value in login_result.items():
+            if key in ("tkn", "token"):
+                struktur[key] = "[AUSGEBLENDET]"
+            elif isinstance(value, dict):
+                struktur[key] = {
+                    "Typ": "Objekt",
+                    "Felder": list(value.keys())
+                }
+            elif isinstance(value, list):
+                struktur[key] = {
+                    "Typ": "Liste",
+                    "Anzahl": len(value)
+                }
+            else:
+                struktur[key] = {
+                    "Typ": type(value).__name__
+                }
+
+        st.json(struktur)
                 else:
                     st.session_state["api"] = api
                     st.session_state["user"] = user
