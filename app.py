@@ -89,6 +89,41 @@ def table_height(row_count):
     return int(38 + row_count * 35)
 
 
+def sort_controls(frame, columns, key, default_column):
+    """
+    Zeigt deutsche Sortierfelder über einer Tabelle.
+
+    Gibt die sortierte Tabelle zurück.
+    """
+    left, right = st.columns([3, 2])
+
+    if default_column in columns:
+        default_index = columns.index(default_column)
+    else:
+        default_index = 0
+
+    sort_column = left.selectbox(
+        "Sortieren nach",
+        columns,
+        index=default_index,
+        key=f"{key}_spalte",
+    )
+
+    direction = right.selectbox(
+        "Reihenfolge",
+        ["Absteigend", "Aufsteigend"],
+        key=f"{key}_richtung",
+    )
+
+    ascending = direction == "Aufsteigend"
+
+    return frame.sort_values(
+        sort_column,
+        ascending=ascending,
+        kind="stable",
+    ).reset_index(drop=True)
+
+
 # ---------------------------------------------------------
 # Namen und IDs
 # ---------------------------------------------------------
@@ -676,17 +711,11 @@ def load_feed_transfers(api, league_id, manager_id):
                         player_id,
                         player_id,
                     ),
-                    "Kaufpreis": format_currency(
-                        buy_price
-                    )
+                    "Kaufpreis": buy_price
                     if known_price
-                    else "Zulosung",
-                    "Verkaufspreis": format_currency(
-                        sale_price
-                    ),
-                    "Gewinn": format_signed_currency(
-                        profit
-                    ),
+                    else None,
+                    "Verkaufspreis": sale_price,
+                    "Gewinn": profit,
                 }
             )
 
@@ -740,7 +769,7 @@ def compute_stats(players):
 
 
 def load_manager_players(api, league_id, manager_id):
-    """Lädt die Spieler eines Managers, ohne Fehler zu werfen."""
+    """Lädt die Spieler eines Managers ohne Fehlerabbruch."""
     try:
         squad_result = api.get_manager_squad(
             league_id,
@@ -756,27 +785,50 @@ def load_manager_players(api, league_id, manager_id):
 def load_realized_profit(api, league_id, manager_id):
     """Liest den realisierten Gewinn aus dem Feld prft."""
     try:
-        value, source = api.get_realized_profit(
+        return api.get_realized_profit(
             league_id,
             manager_id,
         )
-
-        return value, source
 
     except Exception:
         return None, None
 
 
 # ---------------------------------------------------------
-# Farbgebung der Tabelle
+# Formatierung und Farben für Tabellen
 # ---------------------------------------------------------
+
+def currency_formatter(value):
+    """Formatiert Zahlen ohne Vorzeichen für Tabellen."""
+    return format_currency(value)
+
+
+def signed_formatter(value):
+    """Formatiert Zahlen mit Vorzeichen für Tabellen."""
+    return format_signed_currency(value)
+
+
+def color_by_value(value):
+    """Färbt eine Zahl grün oder rot."""
+    number = to_number(value)
+
+    if number is None or number == 0:
+        return ""
+
+    if number > 0:
+        return (
+            f"color: {COLOR_POSITIVE}; font-weight: 600"
+        )
+
+    return f"color: {COLOR_NEGATIVE}; font-weight: 600"
+
 
 def style_player_table(frame):
     """
-    Färbt die Kadertabelle ein.
+    Formatiert und färbt die Kadertabelle.
 
-    Trading Spieler werden ausgegraut.
-    Plus ist grün, Minus ist rot.
+    Die Zahlen bleiben Zahlen, damit korrekt
+    sortiert werden kann.
     """
 
     def color_row(row):
@@ -789,71 +841,74 @@ def style_player_table(frame):
 
         return [""] * len(row)
 
-    def color_change(value):
-        """Färbt Beträge grün oder rot."""
-        text = str(value)
-
-        if text.startswith("+"):
-            return (
-                f"color: {COLOR_POSITIVE}; "
-                "font-weight: 600"
-            )
-
-        if text.startswith("-"):
-            return (
-                f"color: {COLOR_NEGATIVE}; "
-                "font-weight: 600"
-            )
-
-        return ""
-
     styled = frame.style.apply(color_row, axis=1)
 
     styled = styled.map(
-        color_change,
-        subset=[
-            "Änderung 24 Stunden",
-            "Gewinn gesamt",
-        ],
+        color_by_value,
+        subset=["Gewinn gesamt", "Trend 24 Stunden"],
+    )
+
+    styled = styled.format(
+        {
+            "Einstandspreis": currency_formatter,
+            "Marktwert": currency_formatter,
+            "Gewinn gesamt": signed_formatter,
+            "Trend 24 Stunden": signed_formatter,
+        }
     )
 
     return styled
 
 
 def style_league_table(frame):
-    """Färbt Gewinn- und Trendspalten der Liga-Tabelle."""
-
-    def color_change(value):
-        """Färbt Beträge grün oder rot."""
-        text = str(value)
-
-        if text.startswith("+"):
-            return (
-                f"color: {COLOR_POSITIVE}; "
-                "font-weight: 600"
-            )
-
-        if text.startswith("-"):
-            return (
-                f"color: {COLOR_NEGATIVE}; "
-                "font-weight: 600"
-            )
-
-        return ""
-
-    columns = [
+    """Formatiert und färbt die Liga-Tabelle."""
+    signed_columns = [
         "Gewinn gesamt",
         "Trend Start 11",
         "Trend Trading",
         "Trend gesamt",
     ]
 
-    present = [
-        column for column in columns
-        if column in frame.columns
+    currency_columns = [
+        "Start 11",
+        "Trading",
+        "Kaderwert",
     ]
 
-    return frame.style.map(color_change, subset=present)
+    styled = frame.style.map(
+        color_by_value,
+        subset=signed_columns,
+    )
+
+    formats = {}
+
+    for column in currency_columns:
+        formats[column] = currency_formatter
+
+    for column in signed_columns:
+        formats[column] = signed_formatter
+
+    return styled.format(formats)
+
+
+def style_trades_table(frame):
+    """Formatiert und färbt die Tabelle verkaufter Spieler."""
+    styled = frame.style.map(
+        color_by_value,
+        subset=["Gewinn"],
+    )
+
+    return styled.format(
+        {
+            "Kaufpreis": lambda value: (
+                "Zulosung"
+                if value is None or pd.isna(value)
+                else format_currency(value)
+            ),
+            "Verkaufspreis": currency_formatter,
+            "Gewinn": signed_formatter,
+        }
+    )
 
 
 # ---------------------------------------------------------
@@ -963,17 +1018,46 @@ st.set_page_config(
     layout="wide",
 )
 
+
+# Gestaltung der Reiter in der Seitenleiste
+st.markdown(
+    """
+    <style>
+    section[data-testid="stSidebar"] div.stButton > button {
+        width: 100%;
+        text-align: left;
+        border-radius: 8px;
+        border: 1px solid #e0e0e0;
+        background-color: #ffffff;
+        color: #333333;
+        font-weight: 500;
+        padding: 10px 14px;
+        margin-bottom: 6px;
+    }
+    section[data-testid="stSidebar"]
+    div.stButton > button:hover {
+        border-color: #bdbdbd;
+        background-color: #f5f5f5;
+        color: #111111;
+    }
+    section[data-testid="stSidebar"]
+    div.stButton > button[kind="primary"] {
+        background-color: #1c1c1c;
+        border-color: #1c1c1c;
+        color: #ffffff;
+    }
+    section[data-testid="stSidebar"]
+    div.stButton > button[kind="primary"]:hover {
+        background-color: #000000;
+        border-color: #000000;
+        color: #ffffff;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
 st.sidebar.title("⚽ Kickbase Dashboard")
-
-
-# ---------------------------------------------------------
-# Abmelden
-# ---------------------------------------------------------
-
-if st.session_state.get("logged_in"):
-    if st.sidebar.button("Abmelden"):
-        st.session_state.clear()
-        st.rerun()
 
 
 # ---------------------------------------------------------
@@ -1028,17 +1112,51 @@ if not st.session_state.get("logged_in"):
 
 
 # ---------------------------------------------------------
-# Ansicht wählen
+# Reiter in der Seitenleiste
 # ---------------------------------------------------------
 
 if "view" not in st.session_state:
     st.session_state["view"] = "Manager"
 
-view = st.sidebar.radio(
-    "Ansicht",
-    ["Manager", "Liga"],
-    key="view",
+st.sidebar.markdown(
+    f"<div style='font-size:12px;font-weight:500;"
+    f"letter-spacing:0.08em;text-transform:uppercase;"
+    f"color:{COLOR_LABEL};margin-bottom:8px;'>"
+    f"Ansicht</div>",
+    unsafe_allow_html=True,
 )
+
+
+def switch_view(target):
+    """Wechselt den Reiter."""
+    st.session_state["view"] = target
+
+
+if st.sidebar.button(
+    "👤  Manager",
+    key="nav_manager",
+    type=(
+        "primary"
+        if st.session_state["view"] == "Manager"
+        else "secondary"
+    ),
+):
+    switch_view("Manager")
+    st.rerun()
+
+if st.sidebar.button(
+    "🏆  Liga",
+    key="nav_liga",
+    type=(
+        "primary"
+        if st.session_state["view"] == "Liga"
+        else "secondary"
+    ),
+):
+    switch_view("Liga")
+    st.rerun()
+
+view = st.session_state["view"]
 
 st.sidebar.markdown("---")
 
@@ -1074,6 +1192,12 @@ kpis_expanded = st.sidebar.checkbox(
     help="Aus bedeutet: Mannschaft steht sofort im Fokus.",
 )
 
+st.sidebar.markdown("---")
+
+if st.sidebar.button("Abmelden", key="logout"):
+    st.session_state.clear()
+    st.rerun()
+
 st.title(f"⚽ {league_name}")
 
 
@@ -1102,10 +1226,6 @@ if not managers:
         st.write(ranking_errors)
 
     st.stop()
-
-manager_ids = [
-    get_manager_id(manager) for manager in managers
-]
 
 
 # ---------------------------------------------------------
@@ -1153,44 +1273,24 @@ if view == "Liga":
 
             realized_value = realized or 0.0
 
-            total_profit = (
-                stats["profit_in_club"] + realized_value
-            )
-
             rows.append(
                 {
                     "Manager": manager_name,
-                    "Start 11": format_currency(
-                        stats["lineup_value"]
-                    ),
-                    "Trading": format_currency(
-                        stats["trading_value"]
-                    ),
-                    "Kaderwert": format_currency(
-                        stats["squad_value"]
-                    ),
+                    "Start 11": stats["lineup_value"],
+                    "Trading": stats["trading_value"],
+                    "Kaderwert": stats["squad_value"],
                     "Spieler": stats["player_count"],
                     "Gewinn gesamt": (
-                        format_signed_currency(
-                            total_profit
-                        )
+                        stats["profit_in_club"]
+                        + realized_value
                     ),
                     "Trend Start 11": (
-                        format_signed_currency(
-                            stats["trend_lineup"]
-                        )
+                        stats["trend_lineup"]
                     ),
                     "Trend Trading": (
-                        format_signed_currency(
-                            stats["trend_trading"]
-                        )
+                        stats["trend_trading"]
                     ),
-                    "Trend gesamt": (
-                        format_signed_currency(
-                            stats["trend_total"]
-                        )
-                    ),
-                    "_sort": stats["squad_value"],
+                    "Trend gesamt": stats["trend_total"],
                 }
             )
 
@@ -1208,14 +1308,24 @@ if view == "Liga":
 
     league_frame = pd.DataFrame(rows)
 
-    league_frame = league_frame.sort_values(
-        "_sort",
-        ascending=False,
-    ).reset_index(drop=True)
+    league_frame = sort_controls(
+        league_frame,
+        [
+            "Manager",
+            "Start 11",
+            "Trading",
+            "Kaderwert",
+            "Spieler",
+            "Gewinn gesamt",
+            "Trend Start 11",
+            "Trend Trading",
+            "Trend gesamt",
+        ],
+        key="liga",
+        default_column="Kaderwert",
+    )
 
     sorted_names = league_frame["Manager"].tolist()
-
-    league_frame = league_frame.drop(columns=["_sort"])
 
     selection = st.dataframe(
         style_league_table(league_frame),
@@ -1227,11 +1337,10 @@ if view == "Liga":
         key="league_table",
     )
 
-    selected_rows = (
-        selection.selection.rows
-        if selection is not None
-        else []
-    )
+    selected_rows = []
+
+    if selection is not None:
+        selected_rows = selection.selection.rows
 
     if selected_rows:
         chosen_name = sorted_names[selected_rows[0]]
@@ -1244,6 +1353,7 @@ if view == "Liga":
                 break
 
         st.session_state["view"] = "Manager"
+        st.session_state["came_from_league"] = True
         st.rerun()
 
     st.stop()
@@ -1252,6 +1362,12 @@ if view == "Liga":
 # ---------------------------------------------------------
 # Ansicht Manager
 # ---------------------------------------------------------
+
+if st.session_state.get("came_from_league"):
+    if st.button("← Zurück zur Liga-Übersicht"):
+        st.session_state["came_from_league"] = False
+        st.session_state["view"] = "Liga"
+        st.rerun()
 
 default_index = st.session_state.get(
     "selected_manager_index",
@@ -1262,13 +1378,16 @@ if default_index >= len(managers):
     default_index = 0
 
 manager_index = st.selectbox(
-    "👤 Manager auswählen",
+    "Manager auswählen",
     range(len(managers)),
     index=default_index,
     format_func=lambda index: get_manager_name(
         managers[index]
     ),
 )
+
+if manager_index != default_index:
+    st.session_state["came_from_league"] = False
 
 st.session_state["selected_manager_index"] = manager_index
 
@@ -1352,9 +1471,14 @@ if realized_profit is not None:
 # KPI-Anzeige, einklappbar
 # ---------------------------------------------------------
 
+open_kpis = kpis_expanded or st.session_state.get(
+    "came_from_league",
+    False,
+)
+
 with st.expander(
     f"Kennzahlen: {selected_manager_name}",
-    expanded=kpis_expanded,
+    expanded=open_kpis,
 ):
     kpi_block(
         "Mannschaft",
@@ -1496,50 +1620,41 @@ elif players:
         except (TypeError, ValueError):
             position_name = "Unbekannt"
 
-        if is_in_lineup(player):
-            status = "Start 11"
-            sort_status = 0
-        else:
-            status = "Trading"
-            sort_status = 1
-
-        profit = get_profit(player)
+        status = (
+            "Start 11"
+            if is_in_lineup(player)
+            else "Trading"
+        )
 
         player_rows.append(
             {
                 "Spieler": get_player_name(player),
                 "Position": position_name,
                 "Status": status,
-                "Einstandspreis": format_currency(
-                    get_buy_price(player)
+                "Einstandspreis": get_buy_price(player),
+                "Marktwert": get_market_value(player),
+                "Gewinn gesamt": get_profit(player),
+                "Trend 24 Stunden": get_daily_change(
+                    player
                 ),
-                "Marktwert": format_currency(
-                    get_market_value(player)
-                ),
-                "Gewinn gesamt": format_signed_currency(
-                    profit
-                ),
-                "Änderung 24 Stunden": (
-                    format_signed_currency(
-                        get_daily_change(player)
-                    )
-                ),
-                "_sort_status": sort_status,
-                "_sort_profit": profit
-                if profit is not None
-                else -999_999_999,
             }
         )
 
     player_frame = pd.DataFrame(player_rows)
 
-    player_frame = player_frame.sort_values(
-        ["_sort_status", "_sort_profit"],
-        ascending=[True, False],
-    )
-
-    player_frame = player_frame.drop(
-        columns=["_sort_status", "_sort_profit"]
+    player_frame = sort_controls(
+        player_frame,
+        [
+            "Spieler",
+            "Position",
+            "Status",
+            "Einstandspreis",
+            "Marktwert",
+            "Gewinn gesamt",
+            "Trend 24 Stunden",
+        ],
+        key="kader",
+        default_column="Gewinn gesamt",
     )
 
     st.dataframe(
@@ -1566,8 +1681,20 @@ if realized_trades:
 
     trades_frame = pd.DataFrame(realized_trades)
 
-    st.dataframe(
+    trades_frame = sort_controls(
         trades_frame,
+        [
+            "Spieler",
+            "Kaufpreis",
+            "Verkaufspreis",
+            "Gewinn",
+        ],
+        key="verkaeufe",
+        default_column="Gewinn",
+    )
+
+    st.dataframe(
+        style_trades_table(trades_frame),
         use_container_width=True,
         hide_index=True,
         height=table_height(len(trades_frame)),
