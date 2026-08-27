@@ -80,6 +80,15 @@ def format_signed_currency(value):
     return f"-{format_currency(abs(number))}"
 
 
+def table_height(row_count):
+    """
+    Berechnet die volle Tabellenhöhe.
+
+    So entsteht kein zusätzliches Scrollfenster.
+    """
+    return int(38 + row_count * 35)
+
+
 # ---------------------------------------------------------
 # Namen und IDs
 # ---------------------------------------------------------
@@ -940,6 +949,13 @@ show_realized = st.sidebar.checkbox(
     help="Liest die Transferhistorie. Dauert länger.",
 )
 
+# NEU: steuert, ob die Kennzahlen aufgeklappt starten
+kpis_expanded = st.sidebar.checkbox(
+    "Kennzahlen aufgeklappt starten",
+    value=False,
+    help="Aus bedeutet: Mannschaft steht sofort im Fokus.",
+)
+
 st.title(f"⚽ {league_name}")
 
 
@@ -1100,110 +1116,119 @@ if realized_profit is not None:
 
 
 # ---------------------------------------------------------
-# KPI-Anzeige
+# KPI-Anzeige, einklappbar
 # ---------------------------------------------------------
 
-st.subheader(
-    f"Kennzahlen: {selected_manager_name}"
-)
+with st.expander(
+    f"Kennzahlen: {selected_manager_name}",
+    expanded=kpis_expanded,
+):
+    # Block 1: Mannschaft
+    kpi_block(
+        "Mannschaft",
+        [
+            (
+                "Start 11",
+                format_currency(lineup_value),
+                [
+                    f"Einstand: "
+                    f"{format_currency(buy_lineup)}",
+                    f"{lineup_count} Spieler",
+                ],
+                "neutral",
+            ),
+            (
+                "Trading",
+                format_currency(trading_value),
+                [
+                    f"Einstand: "
+                    f"{format_currency(buy_trading)}",
+                    f"{trading_count} Spieler",
+                ],
+                "neutral",
+            ),
+            (
+                "Gesamt",
+                format_currency(squad_value),
+                [
+                    f"Einstand: "
+                    f"{format_currency(buy_total)}",
+                    f"{len(players)} Spieler",
+                ],
+                "neutral",
+            ),
+        ],
+    )
 
-# Block 1: Mannschaft
-kpi_block(
-    "Mannschaft",
-    [
-        (
-            "Start 11",
-            format_currency(lineup_value),
-            [
-                f"Einstand: {format_currency(buy_lineup)}",
-                f"{lineup_count} Spieler",
-            ],
-            "neutral",
-        ),
-        (
-            "Trading",
-            format_currency(trading_value),
-            [
-                f"Einstand: {format_currency(buy_trading)}",
-                f"{trading_count} Spieler",
-            ],
-            "neutral",
-        ),
-        (
-            "Gesamt",
-            format_currency(squad_value),
-            [
-                f"Einstand: {format_currency(buy_total)}",
-                f"{len(players)} Spieler",
-            ],
-            "neutral",
-        ),
-    ],
-)
+    # Block 2: Gewinn
+    kpi_block(
+        "Gewinn",
+        [
+            (
+                "realisiert",
+                format_signed_currency(realized_profit)
+                if realized_profit is not None
+                else "—",
+                [realized_note],
+                tone_of(realized_profit),
+            ),
+            (
+                "im Verein",
+                format_signed_currency(profit_in_club),
+                ["aus Marktwertsteigerung"],
+                tone_of(profit_in_club),
+            ),
+            (
+                "Gesamt",
+                format_signed_currency(total_profit),
+                ["realisiert plus im Verein"],
+                tone_of(total_profit),
+            ),
+        ],
+    )
 
-# Block 2: Gewinn
-kpi_block(
-    "Gewinn",
-    [
-        (
-            "realisiert",
-            format_signed_currency(realized_profit)
-            if realized_profit is not None
-            else "—",
-            [realized_note],
-            tone_of(realized_profit),
-        ),
-        (
-            "im Verein",
-            format_signed_currency(profit_in_club),
-            ["aus Marktwertsteigerung"],
-            tone_of(profit_in_club),
-        ),
-        (
-            "Gesamt",
-            format_signed_currency(total_profit),
-            ["realisiert plus im Verein"],
-            tone_of(total_profit),
-        ),
-    ],
-)
+    # Block 3: Trend der letzten 24 Stunden
+    kpi_block(
+        "Trend",
+        [
+            (
+                "Start 11",
+                format_signed_currency(
+                    daily_change_lineup
+                ),
+                ["letzte 24 Stunden"],
+                tone_of(daily_change_lineup),
+            ),
+            (
+                "Trading",
+                format_signed_currency(
+                    daily_change_trading
+                ),
+                ["letzte 24 Stunden"],
+                tone_of(daily_change_trading),
+            ),
+            (
+                "Gesamt",
+                format_signed_currency(
+                    daily_change_total
+                ),
+                ["letzte 24 Stunden"],
+                tone_of(daily_change_total),
+            ),
+        ],
+    )
 
-# Block 3: Trend der letzten 24 Stunden
-kpi_block(
-    "Trend",
-    [
-        (
-            "Start 11",
-            format_signed_currency(daily_change_lineup),
-            ["letzte 24 Stunden"],
-            tone_of(daily_change_lineup),
-        ),
-        (
-            "Trading",
-            format_signed_currency(daily_change_trading),
-            ["letzte 24 Stunden"],
-            tone_of(daily_change_trading),
-        ),
-        (
-            "Gesamt",
-            format_signed_currency(daily_change_total),
-            ["letzte 24 Stunden"],
-            tone_of(daily_change_total),
-        ),
-    ],
-)
+    # Block 4: Platzhalter für weitere KPIs
+    kpi_block(
+        "Weitere KPIs",
+        build_extra_kpis(),
+    )
 
-# Block 4: Platzhalter für weitere KPIs
-kpi_block(
-    "Weitere KPIs",
-    build_extra_kpis(),
-)
-
-st.markdown("")
+    st.markdown("")
 
 
 # ---------------------------------------------------------
-# Kadertabelle
+# Kadertabelle, immer vollständig sichtbar
 # ---------------------------------------------------------
 
 st.subheader(
@@ -1290,6 +1315,7 @@ elif players:
         style_player_table(player_frame),
         use_container_width=True,
         hide_index=True,
+        height=table_height(len(player_frame)),
     )
 
     st.caption(
@@ -1307,10 +1333,13 @@ else:
 if realized_trades:
     st.subheader("Verkaufte Spieler")
 
+    trades_frame = pd.DataFrame(realized_trades)
+
     st.dataframe(
-        pd.DataFrame(realized_trades),
+        trades_frame,
         use_container_width=True,
         hide_index=True,
+        height=table_height(len(trades_frame)),
     )
 
 
@@ -1348,86 +1377,94 @@ with st.expander("Alle Daten zu einem Spieler"):
 # Alle Daten zu einem Manager
 # ---------------------------------------------------------
 
-st.subheader("Alle Daten zu diesem Manager")
-
-st.write(
-    "Hier werden alle bekannten Manager-Endpunkte "
-    "getestet und ihr Inhalt angezeigt."
-)
-
-if st.button("Manager-Daten laden"):
-    with st.spinner("Endpunkte werden getestet …"):
-        manager_sources, manager_errors = (
-            api.explore_manager(
-                league_id,
-                selected_manager_id,
-            )
-        )
-
-    st.session_state["manager_sources"] = manager_sources
-    st.session_state["manager_errors"] = manager_errors
-
-manager_sources = st.session_state.get(
-    "manager_sources",
-    [],
-)
-
-manager_errors = st.session_state.get(
-    "manager_errors",
-    [],
-)
-
-if manager_sources:
-    st.success(
-        f"{len(manager_sources)} Endpunkte haben "
-        "geantwortet."
+with st.expander("Alle Daten zu diesem Manager"):
+    st.write(
+        "Hier werden alle bekannten Manager-Endpunkte "
+        "getestet und ihr Inhalt angezeigt."
     )
 
-    overview_rows = []
-
-    for source in manager_sources:
-        data = source["data"]
-
-        if isinstance(data, dict):
-            content = ", ".join(sorted(data.keys()))
-        elif isinstance(data, list):
-            content = f"Liste mit {len(data)} Einträgen"
-        else:
-            content = str(type(data).__name__)
-
-        overview_rows.append(
-            {
-                "Endpunkt": source["path"],
-                "Enthaltene Felder": content,
-            }
-        )
-
-    st.dataframe(
-        pd.DataFrame(overview_rows),
-        use_container_width=True,
-        hide_index=True,
-    )
-
-    st.write("**Inhalt der einzelnen Endpunkte:**")
-
-    for source in manager_sources:
-        with st.expander(source["path"]):
-            fields = flatten_fields(source["data"])
-
-            if fields:
-                st.dataframe(
-                    pd.DataFrame(fields),
-                    use_container_width=True,
-                    hide_index=True,
-                    height=350,
+    if st.button("Manager-Daten laden"):
+        with st.spinner("Endpunkte werden getestet …"):
+            manager_sources, manager_errors = (
+                api.explore_manager(
+                    league_id,
+                    selected_manager_id,
                 )
+            )
 
-            st.write("**Rohdaten:**")
-            st.json(source["data"])
+        st.session_state["manager_sources"] = (
+            manager_sources
+        )
+        st.session_state["manager_errors"] = (
+            manager_errors
+        )
 
-if manager_errors:
-    with st.expander("Endpunkte ohne Antwort"):
-        st.write(manager_errors)
+    manager_sources = st.session_state.get(
+        "manager_sources",
+        [],
+    )
+
+    manager_errors = st.session_state.get(
+        "manager_errors",
+        [],
+    )
+
+    if manager_sources:
+        st.success(
+            f"{len(manager_sources)} Endpunkte haben "
+            "geantwortet."
+        )
+
+        overview_rows = []
+
+        for source in manager_sources:
+            data = source["data"]
+
+            if isinstance(data, dict):
+                content = ", ".join(sorted(data.keys()))
+            elif isinstance(data, list):
+                content = (
+                    f"Liste mit {len(data)} Einträgen"
+                )
+            else:
+                content = str(type(data).__name__)
+
+            overview_rows.append(
+                {
+                    "Endpunkt": source["path"],
+                    "Enthaltene Felder": content,
+                }
+            )
+
+        overview_frame = pd.DataFrame(overview_rows)
+
+        st.dataframe(
+            overview_frame,
+            use_container_width=True,
+            hide_index=True,
+            height=table_height(len(overview_frame)),
+        )
+
+        st.write("**Inhalt der einzelnen Endpunkte:**")
+
+        for source in manager_sources:
+            with st.expander(source["path"]):
+                fields = flatten_fields(source["data"])
+
+                if fields:
+                    st.dataframe(
+                        pd.DataFrame(fields),
+                        use_container_width=True,
+                        hide_index=True,
+                        height=350,
+                    )
+
+                st.write("**Rohdaten:**")
+                st.json(source["data"])
+
+    if manager_errors:
+        with st.expander("Endpunkte ohne Antwort"):
+            st.write(manager_errors)
 
 
 # ---------------------------------------------------------
