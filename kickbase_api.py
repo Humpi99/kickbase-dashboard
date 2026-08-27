@@ -119,11 +119,7 @@ class KickbaseAPI:
         )
 
     def try_paths(self, paths, params=None):
-        """
-        Testet mehrere mögliche Endpunkte.
-
-        Alle erfolgreichen Antworten werden zurückgegeben.
-        """
+        """Testet mehrere mögliche Endpunkte."""
         results = []
         errors = []
 
@@ -143,9 +139,7 @@ class KickbaseAPI:
         return results, errors
 
     def get_league_sources(self, league_id):
-        """
-        Lädt mögliche Quellen für Liga- und Managerinformationen.
-        """
+        """Lädt mögliche Quellen für Liga- und Managerinformationen."""
         paths = [
             f"/v4/leagues/{league_id}",
             f"/v4/leagues/{league_id}/info",
@@ -164,37 +158,19 @@ class KickbaseAPI:
         return self.try_paths(paths)
 
     def get_user_players(self, league_id, user_id, day_number=1):
-    """
-    Lädt den Team-Center eines Managers.
+        """
+        Lädt den Team-Center eines Managers.
 
-    Der Team-Center enthält den Kader beziehungsweise
-    die Mannschaft für den angegebenen Spieltag.
-    """
-
-    paths = [
-        f"/v4/leagues/{league_id}/users/{user_id}/teamcenter",
-    ]
-
-    results, errors = self.try_paths(
-        paths,
-        params={"dayNumber": day_number},
-    )
-
-    if results:
-        return results[0]["data"]
-
-    raise Exception(" | ".join(errors))
-        """Versucht, den Kader eines Managers zu laden."""
+        Der korrekte v4-Pfad lautet:
+        /v4/leagues/{leagueId}/users/{userId}/teamcenter
+        """
         paths = [
-            f"/v4/leagues/{league_id}/users/{user_id}/players",
-            f"/v4/leagues/{league_id}/user/{user_id}/players",
-            f"/v4/leagues/{league_id}/teamcenter/{user_id}",
-            f"/leagues/{league_id}/users/{user_id}/players",
+            f"/v4/leagues/{league_id}/users/{user_id}/teamcenter",
         ]
 
         results, errors = self.try_paths(
             paths,
-            params={"matchDay": 0},
+            params={"dayNumber": day_number},
         )
 
         if results:
@@ -203,7 +179,7 @@ class KickbaseAPI:
         raise Exception(" | ".join(errors))
 
     def get_market(self, league_id):
-        """Versucht, den Transfermarkt zu laden."""
+        """Lädt den Transfermarkt."""
         paths = [
             f"/v4/leagues/{league_id}/market",
             f"/leagues/{league_id}/market",
@@ -217,7 +193,7 @@ class KickbaseAPI:
         raise Exception(" | ".join(errors))
 
     def get_league_feed(self, league_id, start=0):
-        """Versucht, den Liga-Feed zu laden."""
+        """Lädt den Liga-Feed."""
         paths = [
             f"/v4/leagues/{league_id}/feed",
             f"/leagues/{league_id}/feed",
@@ -234,7 +210,7 @@ class KickbaseAPI:
         raise Exception(" | ".join(errors))
 
     def get_me(self, league_id):
-        """Versucht, die eigenen Finanzdaten zu laden."""
+        """Lädt die eigenen Finanzdaten."""
         paths = [
             f"/v4/leagues/{league_id}/me",
             f"/leagues/{league_id}/me",
