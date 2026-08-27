@@ -95,16 +95,24 @@ def sort_controls(frame, columns, key, default_column):
 
     Gibt die sortierte Tabelle zurück.
     """
+    available = [
+        column for column in columns
+        if column in frame.columns
+    ]
+
+    if not available:
+        return frame.reset_index(drop=True)
+
     left, right = st.columns([3, 2])
 
-    if default_column in columns:
-        default_index = columns.index(default_column)
+    if default_column in available:
+        default_index = available.index(default_column)
     else:
         default_index = 0
 
     sort_column = left.selectbox(
         "Sortieren nach",
-        columns,
+        available,
         index=default_index,
         key=f"{key}_spalte",
     )
@@ -863,16 +871,22 @@ def style_player_table(frame):
 def style_league_table(frame):
     """Formatiert und färbt die Liga-Tabelle."""
     signed_columns = [
-        "Gewinn gesamt",
-        "Trend Start 11",
-        "Trend Trading",
-        "Trend gesamt",
+        column for column in [
+            "Gewinn gesamt",
+            "Trend Start 11",
+            "Trend Trading",
+            "Trend gesamt",
+        ]
+        if column in frame.columns
     ]
 
     currency_columns = [
-        "Start 11",
-        "Trading",
-        "Kaderwert",
+        column for column in [
+            "Start 11",
+            "Trading",
+            "Kaderwert",
+        ]
+        if column in frame.columns
     ]
 
     styled = frame.style.map(
@@ -1126,12 +1140,6 @@ st.sidebar.markdown(
     unsafe_allow_html=True,
 )
 
-
-def switch_view(target):
-    """Wechselt den Reiter."""
-    st.session_state["view"] = target
-
-
 if st.sidebar.button(
     "👤  Manager",
     key="nav_manager",
@@ -1141,7 +1149,7 @@ if st.sidebar.button(
         else "secondary"
     ),
 ):
-    switch_view("Manager")
+    st.session_state["view"] = "Manager"
     st.rerun()
 
 if st.sidebar.button(
@@ -1153,7 +1161,7 @@ if st.sidebar.button(
         else "secondary"
     ),
 ):
-    switch_view("Liga")
+    st.session_state["view"] = "Liga"
     st.rerun()
 
 view = st.session_state["view"]
@@ -1240,7 +1248,9 @@ if view == "Liga":
         "Detailansicht des Managers."
     )
 
-    cache_key = f"league_rows_{league_id}"
+    # Neuer Schluessel, damit alte Textwerte
+    # aus frueheren Versionen verworfen werden.
+    cache_key = f"league_rows_v2_{league_id}"
 
     if st.button("Daten neu laden"):
         st.session_state.pop(cache_key, None)
@@ -1307,6 +1317,12 @@ if view == "Liga":
     rows = st.session_state[cache_key]
 
     league_frame = pd.DataFrame(rows)
+
+    # Alte Hilfsspalte aus frueheren Versionen entfernen
+    if "_sort" in league_frame.columns:
+        league_frame = league_frame.drop(
+            columns=["_sort"]
+        )
 
     league_frame = sort_controls(
         league_frame,
