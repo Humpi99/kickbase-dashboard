@@ -1,7 +1,7 @@
 """
 Kickbase Liga-Dashboard.
 
-KPIs: Kaderwert, Start 11, Trading, Gewinne.
+KPIs: Mannschaft, Gewinn, Trend.
 """
 
 import pandas as pd
@@ -721,6 +721,69 @@ def style_player_table(frame):
 
 
 # ---------------------------------------------------------
+# NEU: KPI-Blöcke wie in der Kickbase-Ansicht
+# ---------------------------------------------------------
+
+def kpi_block(title, entries):
+    """
+    Zeigt einen KPI-Block mit Überschrift und drei Spalten.
+
+    entries ist eine Liste aus drei Einträgen:
+    (Beschriftung, Hauptwert, Zusatzzeile, Farbe)
+    Farbe ist "neutral", "plus" oder "minus".
+    """
+    colors = {
+        "neutral": "#111111",
+        "plus": "#1a8f3c",
+        "minus": "#c62828",
+    }
+
+    st.markdown(
+        f"<div style='border-top:3px solid #1a8f3c;"
+        f"padding-top:6px;margin-top:18px;"
+        f"font-size:15px;font-weight:700;"
+        f"color:#444444;'>{title}</div>",
+        unsafe_allow_html=True,
+    )
+
+    columns = st.columns(3)
+
+    for column, entry in zip(columns, entries):
+        label, value, note, tone = entry
+
+        color = colors.get(tone, colors["neutral"])
+
+        note_html = ""
+
+        if note:
+            note_html = (
+                f"<div style='font-size:13px;"
+                f"color:#888888;'>{note}</div>"
+            )
+
+        column.markdown(
+            f"<div style='padding:10px 0 4px 0;'>"
+            f"<div style='font-size:13px;"
+            f"color:#888888;'>{label}</div>"
+            f"<div style='font-size:22px;font-weight:700;"
+            f"color:{color};'>{value}</div>"
+            f"{note_html}"
+            f"</div>",
+            unsafe_allow_html=True,
+        )
+
+
+def tone_of(value):
+    """Bestimmt die Farbe anhand des Vorzeichens."""
+    number = to_number(value)
+
+    if number is None or number == 0:
+        return "neutral"
+
+    return "plus" if number > 0 else "minus"
+
+
+# ---------------------------------------------------------
 # Seiteneinstellungen
 # ---------------------------------------------------------
 
@@ -908,7 +971,7 @@ if show_realized and players:
             selected_manager_id,
         )
 
-# NEU: realisierter Gewinn direkt aus dem Feld prft.
+# Realisierter Gewinn direkt aus dem Feld prft.
 # Wenn prft gefunden wird, hat es Vorrang vor dem Feed.
 
 prft_value = None
@@ -923,11 +986,10 @@ if players:
 
 if prft_value is not None:
     realized_profit = prft_value
-    realized_help = f"Feld prft aus {prft_source}"
+    realized_note = "aus Feld prft"
 else:
-    realized_help = (
-        f"{len(realized_trades)} Verkäufe erkannt "
-        "(Feld prft nicht gefunden)"
+    realized_note = (
+        f"{len(realized_trades)} Verkäufe erkannt"
     )
 
 
@@ -940,7 +1002,10 @@ lineup_value = 0.0
 trading_value = 0.0
 profit_in_club = 0.0
 buy_total = 0.0
+
 daily_change_total = 0.0
+daily_change_lineup = 0.0
+daily_change_trading = 0.0
 
 lineup_count = 0
 trading_count = 0
@@ -952,86 +1017,110 @@ for player in players:
     profit_in_club += get_profit(player) or 0.0
     buy_total += get_buy_price(player) or 0.0
 
-    daily_change_total += get_daily_change(player) or 0.0
+    daily_change = get_daily_change(player) or 0.0
+    daily_change_total += daily_change
 
     if is_in_lineup(player):
         lineup_value += market_value
+        daily_change_lineup += daily_change
         lineup_count += 1
     else:
         trading_value += market_value
+        daily_change_trading += daily_change
         trading_count += 1
-
-
-# ---------------------------------------------------------
-# KPI-Anzeige
-# ---------------------------------------------------------
-
-st.subheader(
-    f"📊 Kennzahlen: {selected_manager_name}"
-)
-
-row1_col1, row1_col2, row1_col3, row1_col4 = (
-    st.columns(4)
-)
-
-row1_col1.metric(
-    "Kaderwert",
-    format_currency(squad_value),
-    help=f"Einstand: {format_currency(buy_total)}",
-)
-
-row1_col2.metric(
-    "Start 11",
-    format_currency(lineup_value),
-    help=f"{lineup_count} Spieler aufgestellt",
-)
-
-row1_col3.metric(
-    "Trading Spieler",
-    format_currency(trading_value),
-    help=f"{trading_count} Spieler auf der Bank",
-)
-
-row1_col4.metric(
-    "Spieler im Verein",
-    len(players),
-    help=(
-        f"{lineup_count} in der Startelf, "
-        f"{trading_count} auf der Bank"
-    ),
-)
-
-row2_col1, row2_col2, row2_col3, row2_col4 = (
-    st.columns(4)
-)
-
-row2_col1.metric(
-    "Gewinn im Verein",
-    format_signed_currency(profit_in_club),
-)
-
-row2_col2.metric(
-    "Gewinn realisiert",
-    format_signed_currency(realized_profit)
-    if realized_profit is not None
-    else "—",
-    help=realized_help,
-)
 
 total_profit = profit_in_club
 
 if realized_profit is not None:
     total_profit = profit_in_club + realized_profit
 
-row2_col3.metric(
-    "Gewinn gesamt",
-    format_signed_currency(total_profit),
+
+# ---------------------------------------------------------
+# KPI-Anzeige in drei Blöcken
+# ---------------------------------------------------------
+
+st.subheader(
+    f"📊 Kennzahlen: {selected_manager_name}"
 )
 
-row2_col4.metric(
-    "Änderung 24 Stunden",
-    format_signed_currency(daily_change_total),
+# Block 1: Mannschaft
+kpi_block(
+    "Mannschaft",
+    [
+        (
+            "Start 11",
+            format_currency(lineup_value),
+            f"{lineup_count} Spieler",
+            "neutral",
+        ),
+        (
+            "Trading",
+            format_currency(trading_value),
+            f"{trading_count} Spieler",
+            "neutral",
+        ),
+        (
+            "Gesamt",
+            format_currency(squad_value),
+            f"{len(players)} Spieler",
+            "neutral",
+        ),
+    ],
 )
+
+# Block 2: Gewinn
+kpi_block(
+    "Gewinn",
+    [
+        (
+            "realisiert",
+            format_signed_currency(realized_profit)
+            if realized_profit is not None
+            else "—",
+            realized_note,
+            tone_of(realized_profit),
+        ),
+        (
+            "im Verein",
+            format_signed_currency(profit_in_club),
+            f"Einstand: {format_currency(buy_total)}",
+            tone_of(profit_in_club),
+        ),
+        (
+            "Gesamt",
+            format_signed_currency(total_profit),
+            "realisiert plus im Verein",
+            tone_of(total_profit),
+        ),
+    ],
+)
+
+# Block 3: Trend der letzten 24 Stunden
+kpi_block(
+    "Trend",
+    [
+        (
+            "Start 11",
+            format_signed_currency(daily_change_lineup),
+            "letzte 24 Stunden",
+            tone_of(daily_change_lineup),
+        ),
+        (
+            "Trading",
+            format_signed_currency(daily_change_trading),
+            "letzte 24 Stunden",
+            tone_of(daily_change_trading),
+        ),
+        (
+            "Gesamt",
+            format_signed_currency(daily_change_total),
+            "letzte 24 Stunden",
+            tone_of(daily_change_total),
+        ),
+    ],
+)
+
+st.markdown("")
 
 
 # ---------------------------------------------------------
