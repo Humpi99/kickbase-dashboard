@@ -176,7 +176,6 @@ MARKET_VALUE_KEYS = [
     "cv",
 ]
 
-# Einstandspreis beziehungsweise Kaufpreis
 BUY_PRICE_KEYS = [
     "buyPrice",
     "bp",
@@ -185,11 +184,9 @@ BUY_PRICE_KEYS = [
     "boughtFor",
     "bf",
     "prc",
-    "tp",
     "trp",
 ]
 
-# Gesamtgewinn seit Kauf
 TOTAL_PROFIT_KEYS = [
     "profit",
     "prof",
@@ -199,7 +196,6 @@ TOTAL_PROFIT_KEYS = [
     "gain",
 ]
 
-# Marktwertänderung der letzten 24 Stunden
 DAILY_CHANGE_KEYS = [
     "tfhmvt",
     "mvt",
@@ -207,16 +203,15 @@ DAILY_CHANGE_KEYS = [
     "dmv",
 ]
 
-# Felder mit dem Aufstellungsplatz
+# Felder, die den Platz in der Startelf enthalten.
+# Wert 0 bis 10 bedeutet aufgestellt.
+# Wert None bedeutet Bank.
 LINEUP_KEYS = [
     "lineupPosition",
     "lo",
-    "lp",
     "lpo",
     "lst",
-    "lineup",
-    "inLineup",
-    "isLineup",
+    "lp",
 ]
 
 
@@ -234,14 +229,61 @@ def get_daily_change(player):
     )
 
 
-def search_keys(value, keys, depth=0):
+def get_lineup_slot(player):
     """
-    Sucht rekursiv nach dem ersten passenden Feld.
+    Ermittelt den Platz in der Startelf.
 
-    Gibt Wert und Pfad zurück.
+    Rückgabe:
+    Zahl von 0 bis 10, wenn aufgestellt.
+    None, wenn nicht aufgestellt.
     """
+    if not isinstance(player, dict):
+        return None
+
+    for key in LINEUP_KEYS:
+        if key not in player:
+            continue
+
+        value = player[key]
+
+        # None bedeutet ausdrücklich Bank
+        if value is None:
+            return None
+
+        # Listen und Texte sind keine Platznummern
+        if isinstance(value, (list, dict)):
+            continue
+
+        if isinstance(value, bool):
+            return 0 if value else None
+
+        number = to_number(value)
+
+        if number is None:
+            continue
+
+        # Gültige Plätze sind 0 bis 10
+        if 0 <= number <= 10:
+            return int(number)
+
+        return None
+
+    return None
+
+
+def is_in_lineup(player):
+    """Prüft, ob ein Spieler in der Startelf steht."""
+    return get_lineup_slot(player) is not None
+
+
+# ---------------------------------------------------------
+# Suche in verschachtelten Antworten
+# ---------------------------------------------------------
+
+def search_keys(value, keys, depth=0):
+    """Sucht rekursiv nach dem ersten passenden Zahlenfeld."""
     if depth > 5:
-        return None, None
+        return None
 
     if isinstance(value, dict):
         for key in keys:
@@ -249,54 +291,28 @@ def search_keys(value, keys, depth=0):
                 number = to_number(value[key])
 
                 if number is not None:
-                    return number, key
+                    return number
 
-        for key, nested_value in value.items():
-            result, path = search_keys(
+        for nested_value in value.values():
+            result = search_keys(
                 nested_value,
                 keys,
                 depth + 1,
             )
 
             if result is not None:
-                return result, f"{key}.{path}"
+                return result
 
     if isinstance(value, list):
         for item in value:
-            result, path = search_keys(
+            result = search_keys(
                 item,
                 keys,
                 depth + 1,
             )
 
             if result is not None:
-                return result, path
-
-    return None, None
-
-
-def is_in_lineup(player):
-    """
-    Prüft, ob ein Spieler aufgestellt ist.
-
-    Platz 0 ist der Torwart und zählt als Startelf.
-    """
-    for key in LINEUP_KEYS:
-        if key not in player:
-            continue
-
-        value = player[key]
-
-        if value is None:
-            return False
-
-        if isinstance(value, bool):
-            return value
-
-        number = to_number(value)
-
-        if number is not None:
-            return number >= 0
+                return result
 
     return None
 
@@ -457,7 +473,6 @@ def find_players_with_value(value):
             "it",
             "items",
             "squad",
-            "lp",
             "pl",
         ],
     )
@@ -505,11 +520,11 @@ def collect_money_fields(value, prefix="", depth=0):
 # Realisierter Gewinn aus dem Feed
 # ---------------------------------------------------------
 
-def load_realized_profit(api, league_id, manager_id):
-    """Berechnet den realisierten Gewinn aus dem Feed."""
+def load_feed_transfers(api, league_id, manager_id):
+    """Liest Käufe und Verkäufe eines Managers."""
     all_items = []
 
-    for start in range(0, 200, 25):
+    for start in range(0, 300, 25):
         try:
             sources, _ = api.get_league_feed(
                 league_id,
@@ -712,13 +727,11 @@ league_name = get_league_name(selected_league)
 load_details = st.sidebar.checkbox(
     "Spielerdetails laden",
     value=True,
-    help="Holt Einstandspreis und Gewinn je Spieler.",
 )
 
 show_realized = st.sidebar.checkbox(
     "Realisierten Gewinn laden",
     value=True,
-    help="Lädt den Liga-Feed.",
 )
 
 st.title(f"⚽ {league_name}")
@@ -791,7 +804,7 @@ except Exception as error:
 
 
 # ---------------------------------------------------------
-# Realisierter Gewinn und Kaufpreise aus dem Feed
+# Feed lesen
 # ---------------------------------------------------------
 
 realized_profit = None
@@ -804,7 +817,7 @@ if show_realized and players:
             realized_profit,
             realized_trades,
             feed_purchases,
-        ) = load_realized_profit(
+        ) = load_feed_transfers(
             api,
             league_id,
             selected_manager_id,
@@ -816,7 +829,6 @@ if show_realized and players:
 # ---------------------------------------------------------
 
 price_by_player = {}
-price_source = {}
 profit_by_player = {}
 detail_samples = {}
 
@@ -838,8 +850,7 @@ if load_details and players:
             except Exception:
                 continue
 
-            # Gesamtgewinn suchen
-            profit, profit_path = search_keys(
+            profit = search_keys(
                 detail,
                 TOTAL_PROFIT_KEYS,
             )
@@ -847,17 +858,14 @@ if load_details and players:
             if profit is not None:
                 profit_by_player[player_id] = profit
 
-            # Einstandspreis suchen
-            price, path = search_keys(
+            price = search_keys(
                 detail,
                 BUY_PRICE_KEYS,
             )
 
             if price is not None:
                 price_by_player[player_id] = price
-                price_source[player_id] = f"API ({path})"
 
-            # Erste zwei Beispiele merken
             if len(detail_samples) < 2:
                 detail_samples[
                     get_player_name(player)
@@ -878,19 +886,35 @@ for player in players:
 
     if feed_prices:
         price_by_player[player_id] = feed_prices[-1]
-        price_source[player_id] = "Feed"
 
 
 def player_buy_price(player):
-    """Gibt den Einstandspreis zurück."""
+    """
+    Gibt den Einstandspreis zurück.
+
+    1. Aus der Detailansicht oder dem Feed
+    2. Aus dem Kaderobjekt
+    3. Marktwert minus bekannter Gewinn
+    """
     player_id = get_player_id(player)
 
     if player_id in price_by_player:
         return price_by_player[player_id]
 
-    return to_number(
+    direct = to_number(
         first_value(player, BUY_PRICE_KEYS)
     )
+
+    if direct is not None:
+        return direct
+
+    profit = profit_by_player.get(player_id)
+    market_value = get_market_value(player)
+
+    if profit is not None and market_value is not None:
+        return market_value - profit
+
+    return None
 
 
 def player_total_profit(player):
@@ -899,6 +923,7 @@ def player_total_profit(player):
 
     1. Direkt aus der API
     2. Marktwert minus Einstandspreis
+    3. Bei zugelosten Spielern ohne Einstandspreis: 0
     """
     player_id = get_player_id(player)
 
@@ -908,10 +933,14 @@ def player_total_profit(player):
     market_value = get_market_value(player)
     buy_price = player_buy_price(player)
 
-    if market_value is None or buy_price is None:
+    if market_value is None:
         return None
 
-    return market_value - buy_price
+    if buy_price is not None:
+        return market_value - buy_price
+
+    # Zugeloste Spieler ohne jede Preisangabe
+    return 0.0
 
 
 # ---------------------------------------------------------
@@ -926,8 +955,6 @@ daily_change_total = 0.0
 
 lineup_count = 0
 trading_count = 0
-lineup_detected = False
-profit_count = 0
 
 for player in players:
     market_value = get_market_value(player) or 0.0
@@ -939,16 +966,8 @@ for player in players:
 
     if profit is not None:
         profit_in_club += profit
-        profit_count += 1
 
-    in_lineup = is_in_lineup(player)
-
-    if in_lineup is None:
-        continue
-
-    lineup_detected = True
-
-    if in_lineup:
+    if is_in_lineup(player):
         lineup_value += market_value
         lineup_count += 1
     else:
@@ -974,18 +993,14 @@ row1_col1.metric(
 
 row1_col2.metric(
     "Start 11",
-    format_currency(lineup_value)
-    if lineup_detected
-    else "—",
-    help=f"{lineup_count} Spieler",
+    format_currency(lineup_value),
+    help=f"{lineup_count} Spieler aufgestellt",
 )
 
 row1_col3.metric(
     "Trading Spieler",
-    format_currency(trading_value)
-    if lineup_detected
-    else "—",
-    help=f"{trading_count} Spieler",
+    format_currency(trading_value),
+    help=f"{trading_count} Spieler auf der Bank",
 )
 
 row2_col1, row2_col2, row2_col3, row2_col4 = (
@@ -995,7 +1010,6 @@ row2_col1, row2_col2, row2_col3, row2_col4 = (
 row2_col1.metric(
     "Gewinn im Verein",
     format_signed_currency(profit_in_club),
-    help=f"Für {profit_count} von {len(players)} Spielern",
 )
 
 row2_col2.metric(
@@ -1016,7 +1030,7 @@ row2_col3.metric(
 )
 
 row2_col4.metric(
-    "Marktwert 24 Stunden",
+    "Änderung 24 Stunden",
     format_signed_currency(daily_change_total),
 )
 
@@ -1059,17 +1073,14 @@ elif players:
         except (TypeError, ValueError):
             position_name = "Unbekannt"
 
-        in_lineup = is_in_lineup(player)
+        slot = get_lineup_slot(player)
 
-        if in_lineup is True:
-            status = "Start 11"
-        elif in_lineup is False:
+        if slot is None:
             status = "Trading"
         else:
-            status = "—"
+            status = f"Start 11 ({slot})"
 
         profit = player_total_profit(player)
-        player_id = get_player_id(player)
 
         player_rows.append(
             {
@@ -1078,10 +1089,6 @@ elif players:
                 "Status": status,
                 "Einstandspreis": format_currency(
                     player_buy_price(player)
-                ),
-                "Quelle": price_source.get(
-                    player_id,
-                    "—",
                 ),
                 "Marktwert": format_currency(
                     get_market_value(player)
@@ -1126,14 +1133,32 @@ else:
 st.markdown("---")
 
 with st.expander("🔎 Diagnose"):
-    st.write(
-        "**Alle Geldbeträge aus der Detailansicht:**"
-    )
+    st.write("**Aufstellungsfelder je Spieler:**")
 
-    st.write(
-        "Vergleiche diese Werte mit dem Gewinn in "
-        "der Kickbase-App."
-    )
+    lineup_debug = []
+
+    for player in players:
+        entry = {
+            "Spieler": get_player_name(player),
+            "Platz erkannt": str(
+                get_lineup_slot(player)
+            ),
+        }
+
+        for key in LINEUP_KEYS:
+            if key in player:
+                entry[key] = repr(player[key])
+
+        lineup_debug.append(entry)
+
+    if lineup_debug:
+        st.dataframe(
+            pd.DataFrame(lineup_debug),
+            use_container_width=True,
+            hide_index=True,
+        )
+
+    st.write("**Geldbeträge aus der Detailansicht:**")
 
     for name, detail in detail_samples.items():
         st.write(f"**{name}**")
