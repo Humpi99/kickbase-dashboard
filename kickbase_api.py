@@ -146,11 +146,7 @@ class KickbaseAPI:
         return self.try_paths(paths)
 
     def get_manager_squad(self, league_id, manager_id):
-        """
-        Lädt den Kader EINES bestimmten Managers.
-
-        Nur dieser Pfad liefert fremde Kader.
-        """
+        """Lädt den Kader eines bestimmten Managers."""
         path = (
             f"/v4/leagues/{league_id}"
             f"/managers/{manager_id}/squad"
@@ -158,29 +154,26 @@ class KickbaseAPI:
 
         return self.get(path)
 
-    def get_manager_performance(self, league_id, manager_id):
+    def get_player_detail(self, league_id, player_id):
         """
-        Lädt Zusatzdaten eines Managers.
+        Lädt die Detailansicht eines Spielers.
 
-        Kann Aufstellung und Transferdaten enthalten.
+        Diese enthält den Gewinn, den die App anzeigt,
+        auch für zugeloste Spieler.
         """
         paths = [
-            f"/v4/leagues/{league_id}"
-            f"/managers/{manager_id}/performance",
-            f"/v4/leagues/{league_id}"
-            f"/managers/{manager_id}/dashboard",
-            f"/v4/leagues/{league_id}"
-            f"/managers/{manager_id}",
+            f"/v4/leagues/{league_id}/players/{player_id}",
         ]
 
-        return self.try_paths(paths)
+        results, errors = self.try_paths(paths)
+
+        if results:
+            return results[0]["data"]
+
+        raise Exception(" | ".join(errors))
 
     def get_league_feed(self, league_id, start=0):
-        """
-        Lädt eine Seite des Liga-Feeds.
-
-        Der Feed enthält Käufe und Verkäufe.
-        """
+        """Lädt eine Seite des Liga-Feeds."""
         paths = [
             f"/v4/leagues/{league_id}/activitiesFeed",
             f"/v4/leagues/{league_id}/feed",
@@ -190,11 +183,3 @@ class KickbaseAPI:
             paths,
             params={"start": start, "max": 25},
         )
-
-    def get_market(self, league_id):
-        """Lädt den Transfermarkt."""
-        paths = [
-            f"/v4/leagues/{league_id}/market",
-        ]
-
-        return self.try_paths(paths)
