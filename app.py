@@ -203,16 +203,10 @@ DAILY_CHANGE_KEYS = [
     "dmv",
 ]
 
-# Felder, die den Platz in der Startelf enthalten.
-# Wert 0 bis 10 bedeutet aufgestellt.
-# Wert None bedeutet Bank.
-LINEUP_KEYS = [
-    "lineupPosition",
-    "lo",
-    "lpo",
-    "lst",
-    "lp",
-]
+# Das Feld "lo" enthält den Platz in der Startelf.
+# Werte 0 bis 10 bedeuten aufgestellt.
+# Der Wert None bedeutet Bank.
+LINEUP_FIELD = "lo"
 
 
 def get_market_value(player):
@@ -235,38 +229,23 @@ def get_lineup_slot(player):
 
     Rückgabe:
     Zahl von 0 bis 10, wenn aufgestellt.
-    None, wenn nicht aufgestellt.
+    None, wenn der Spieler auf der Bank sitzt.
     """
     if not isinstance(player, dict):
         return None
 
-    for key in LINEUP_KEYS:
-        if key not in player:
-            continue
+    value = player.get(LINEUP_FIELD)
 
-        value = player[key]
-
-        # None bedeutet ausdrücklich Bank
-        if value is None:
-            return None
-
-        # Listen und Texte sind keine Platznummern
-        if isinstance(value, (list, dict)):
-            continue
-
-        if isinstance(value, bool):
-            return 0 if value else None
-
-        number = to_number(value)
-
-        if number is None:
-            continue
-
-        # Gültige Plätze sind 0 bis 10
-        if 0 <= number <= 10:
-            return int(number)
-
+    if value is None:
         return None
+
+    number = to_number(value)
+
+    if number is None:
+        return None
+
+    if 0 <= number <= 10:
+        return int(number)
 
     return None
 
@@ -517,7 +496,7 @@ def collect_money_fields(value, prefix="", depth=0):
 
 
 # ---------------------------------------------------------
-# Realisierter Gewinn aus dem Feed
+# Transfers aus dem Liga-Feed
 # ---------------------------------------------------------
 
 def load_feed_transfers(api, league_id, manager_id):
@@ -923,7 +902,7 @@ def player_total_profit(player):
 
     1. Direkt aus der API
     2. Marktwert minus Einstandspreis
-    3. Bei zugelosten Spielern ohne Einstandspreis: 0
+    3. Ohne Preisangabe: 0
     """
     player_id = get_player_id(player)
 
@@ -939,7 +918,6 @@ def player_total_profit(player):
     if buy_price is not None:
         return market_value - buy_price
 
-    # Zugeloste Spieler ohne jede Preisangabe
     return 0.0
 
 
@@ -1078,7 +1056,7 @@ elif players:
         if slot is None:
             status = "Trading"
         else:
-            status = f"Start 11 ({slot})"
+            status = "Start 11"
 
         profit = player_total_profit(player)
 
@@ -1133,31 +1111,6 @@ else:
 st.markdown("---")
 
 with st.expander("🔎 Diagnose"):
-    st.write("**Aufstellungsfelder je Spieler:**")
-
-    lineup_debug = []
-
-    for player in players:
-        entry = {
-            "Spieler": get_player_name(player),
-            "Platz erkannt": str(
-                get_lineup_slot(player)
-            ),
-        }
-
-        for key in LINEUP_KEYS:
-            if key in player:
-                entry[key] = repr(player[key])
-
-        lineup_debug.append(entry)
-
-    if lineup_debug:
-        st.dataframe(
-            pd.DataFrame(lineup_debug),
-            use_container_width=True,
-            hide_index=True,
-        )
-
     st.write("**Geldbeträge aus der Detailansicht:**")
 
     for name, detail in detail_samples.items():
