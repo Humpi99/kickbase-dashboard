@@ -11,6 +11,7 @@ class KickbaseAPI:
     def __init__(self):
         self.base_url = "https://api.kickbase.com"
         self.token = None
+        self.own_user_id = None
         self.session = requests.Session()
 
     def _headers(self):
@@ -70,6 +71,8 @@ class KickbaseAPI:
                     "Anmeldung erfolgreich, aber kein Token gefunden."
                 )
 
+            self.own_user_id = self._find_own_user_id(result)
+
             return result
 
         if response.status_code in (400, 401, 403):
@@ -80,6 +83,54 @@ class KickbaseAPI:
         raise Exception(
             f"Anmeldung fehlgeschlagen. Status: {response.status_code}"
         )
+
+    def _find_own_user_id(self, data, depth=0):
+        """
+        Sucht die eigene Benutzer-ID in der Login-Antwort.
+
+        Kickbase liefert sie meist unter u.id oder user.id.
+        """
+        if depth > 5:
+            return None
+
+        if isinstance(data, dict):
+            # Direkte Benutzerobjekte zuerst pruefen
+            for key in ["u", "user", "me", "usr"]:
+                block = data.get(key)
+
+                if isinstance(block, dict):
+                    for id_key in ["i", "id", "userId", "ui"]:
+                        value = block.get(id_key)
+
+                        if value:
+                            return str(value)
+
+            for key in ["userId", "uid", "ui"]:
+                value = data.get(key)
+
+                if value:
+                    return str(value)
+
+            for value in data.values():
+                result = self._find_own_user_id(
+                    value,
+                    depth + 1,
+                )
+
+                if result:
+                    return result
+
+        if isinstance(data, list):
+            for item in data:
+                result = self._find_own_user_id(
+                    item,
+                    depth + 1,
+                )
+
+                if result:
+                    return result
+
+        return None
 
     def get(self, path, params=None):
         """Führt eine authentifizierte GET-Anfrage aus."""
@@ -226,7 +277,7 @@ class KickbaseAPI:
         return self.try_paths(paths)
 
     # -----------------------------------------------------
-    # NEU: realisierter Gewinn über das Feld prft
+    # Suche nach einzelnen Feldern
     # -----------------------------------------------------
 
     def find_field(self, data, field_name, depth=0):
@@ -271,12 +322,15 @@ class KickbaseAPI:
 
         return None
 
+    # -----------------------------------------------------
+    # Realisierter Gewinn über das Feld prft
+    # -----------------------------------------------------
+
     def get_realized_profit(self, league_id, manager_id):
         """
         Liest den realisierten Gewinn aus dem Feld prft.
 
         Rückgabe: (wert, quelle).
-        Wert ist None, wenn prft nirgends gefunden wurde.
         """
         base = f"/v4/leagues/{league_id}/managers/{manager_id}"
         user_base = f"/v4/leagues/{league_id}/users/{manager_id}"
@@ -302,5 +356,54 @@ class KickbaseAPI:
 
             if value is not None:
                 return value, path
+
+        return None, None
+
+    # -----------------------------------------------------
+    # NEU: echter Kontostand des eigenen Accounts
+    # -----------------------------------------------------
+
+    def get_budget(self, league_id):
+        """
+        Liest den echten Kontostand des angemeldeten Nutzers.
+
+        Rückgabe: (wert, quelle).
+        Wert ist None, wenn kein Budgetfeld gefunden wurde.
+        """
+        paths = [
+            f"/v4/leagues/{league_id}/me/budget",
+            f"/v4/leagues/{league_id}/me",
+            f"/v4/leagues/{league_id}/budget",
+            f"/v4/leagues/{league_id}/overview",
+            f"/v4/leagues/{league_id}/squad",
+        ]
+
+        if self.own_user_id:
+            paths.extend(
+                [
+                    f"/v4/leagues/{league_id}"
+                    f"/managers/{self.own_user_id}/dashboard",
+                    f"/v4/leagues/{league_id}"
+                    f"/managers/{self.own_user_id}/budget",
+                    f"/v4/leagues/{league_id}"
+                    f"/users/{self.own_user_id}/budget",
+                ]
+            )
+
+        # Reihenfolge der moeglichen Feldnamen
+        field_names = ["b", "budget", "bs", "bdg"]
+
+        for path in paths:
+            try:
+                data = self.get(path)
+            except Exception:
+                continue
+
+            for field_name in field_names:
+                value = self.find_field(data, field_name)
+
+                # Sehr kleine Werte sind meist keine Betraege
+                if value is not None and abs(value) >= 1000:
+                    return value, f"{path} ({field_name})"
 
         return None, None
