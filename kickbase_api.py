@@ -138,7 +138,7 @@ class KickbaseAPI:
         return results, errors
 
     def get_ranking(self, league_id):
-        """Lädt das Liga-Ranking."""
+        """Lädt das Liga-Ranking mit den Managern."""
         paths = [
             f"/v4/leagues/{league_id}/ranking",
         ]
@@ -146,7 +146,11 @@ class KickbaseAPI:
         return self.try_paths(paths)
 
     def get_manager_squad(self, league_id, manager_id):
-        """Lädt den Kader eines bestimmten Managers."""
+        """
+        Lädt den Kader eines bestimmten Managers.
+
+        Nur dieser Pfad liefert auch fremde Kader.
+        """
         path = (
             f"/v4/leagues/{league_id}"
             f"/managers/{manager_id}/squad"
@@ -158,8 +162,7 @@ class KickbaseAPI:
         """
         Lädt die Detailansicht eines Spielers.
 
-        Diese enthält den Gewinn, den die App anzeigt,
-        auch für zugeloste Spieler.
+        Enthält Kaufpreis und Gewinn.
         """
         paths = [
             f"/v4/leagues/{league_id}/players/{player_id}",
@@ -171,19 +174,6 @@ class KickbaseAPI:
             return results[0]["data"]
 
         raise Exception(" | ".join(errors))
-
-    def get_league_feed(self, league_id, start=0):
-        """Lädt eine Seite des Liga-Feeds."""
-        paths = [
-            f"/v4/leagues/{league_id}/activitiesFeed",
-            f"/v4/leagues/{league_id}/activities",
-            f"/v4/leagues/{league_id}/feed",
-        ]
-
-        return self.try_paths(
-            paths,
-            params={"start": start, "max": 25},
-        )
 
     def get_manager_transfers(self, league_id, manager_id):
         """
@@ -198,6 +188,29 @@ class KickbaseAPI:
             f"/managers/{manager_id}/activities",
             f"/v4/leagues/{league_id}"
             f"/managers/{manager_id}/performance",
+            f"/v4/leagues/{league_id}"
+            f"/managers/{manager_id}/dashboard",
+        ]
+
+        return self.try_paths(paths)
+
+    def get_league_feed(self, league_id, start=0):
+        """Lädt eine Seite des Liga-Feeds."""
+        paths = [
+            f"/v4/leagues/{league_id}/activitiesFeed",
+            f"/v4/leagues/{league_id}/activities",
+            f"/v4/leagues/{league_id}/feed",
+        ]
+
+        return self.try_paths(
+            paths,
+            params={"start": start, "max": 25},
+        )
+
+    def get_market(self, league_id):
+        """Lädt den Transfermarkt der Liga."""
+        paths = [
+            f"/v4/leagues/{league_id}/market",
         ]
 
         return self.try_paths(paths)
