@@ -1,7 +1,7 @@
 """
 Kickbase Liga-Dashboard.
 
-Fokus: Kaderwert und Gewinn je Manager.
+Fokus: Kaderwert, Einstandspreis und Gewinn je Manager.
 """
 
 import pandas as pd
@@ -156,7 +156,7 @@ def get_player_name(player):
 
 
 # ---------------------------------------------------------
-# Werte für Kaderwert, Kaufpreis und Gewinn
+# Feldnamen für Werte
 # ---------------------------------------------------------
 
 TEAM_VALUE_KEYS = [
@@ -182,7 +182,6 @@ BUY_PRICE_KEYS = [
     "boughtFor",
     "bf",
     "prc",
-    "tp",
 ]
 
 PROFIT_KEYS = [
@@ -208,29 +207,76 @@ def get_market_value(player):
     )
 
 
-def get_buy_price(player):
-    """Liest den Kaufpreis eines Spielers."""
+def get_raw_buy_price(player):
+    """
+    Liest den echten Kaufpreis aus der API.
+
+    Zugeloste Spieler haben hier oft keinen Wert.
+    """
     return to_number(
         first_value(player, BUY_PRICE_KEYS)
     )
 
 
-def get_player_profit(player):
-    """Berechnet den Gewinn eines Spielers."""
-    direct_profit = to_number(
+def get_raw_profit(player):
+    """Liest einen bereits vorhandenen Gewinnwert."""
+    return to_number(
         first_value(player, PROFIT_KEYS)
     )
+
+
+def get_player_profit(player):
+    """
+    Ermittelt den Gewinn eines Spielers.
+
+    1. Gewinn direkt aus der API
+    2. Sonst Marktwert minus Kaufpreis
+    """
+    direct_profit = get_raw_profit(player)
 
     if direct_profit is not None:
         return direct_profit
 
     market_value = get_market_value(player)
-    buy_price = get_buy_price(player)
+    buy_price = get_raw_buy_price(player)
 
     if market_value is None or buy_price is None:
         return None
 
     return market_value - buy_price
+
+
+def get_buy_price(player):
+    """
+    Ermittelt den Einstandspreis eines Spielers.
+
+    1. Kaufpreis direkt aus der API
+    2. Sonst Marktwert minus Gewinn
+       (wichtig für zugeloste Spieler)
+    """
+    raw_price = get_raw_buy_price(player)
+
+    if raw_price is not None:
+        return raw_price
+
+    market_value = get_market_value(player)
+    profit = get_raw_profit(player)
+
+    if market_value is None or profit is None:
+        return None
+
+    return market_value - profit
+
+
+def get_price_source(player):
+    """Gibt an, woher der Einstandspreis stammt."""
+    if get_raw_buy_price(player) is not None:
+        return "Kaufpreis"
+
+    if get_raw_profit(player) is not None:
+        return "Berechnet"
+
+    return "—"
 
 
 # ---------------------------------------------------------
@@ -654,30 +700,21 @@ st.subheader(
 team_value = get_team_value(selected_manager)
 
 calculated_value = None
-
-if players:
-    values = [
-        get_market_value(player)
-        for player in players
-    ]
-
-    values = [
-        value for value in values
-        if value is not None
-    ]
-
-    if values:
-        calculated_value = sum(values)
-
 total_profit = None
-profit_count = 0
 total_buy = None
+profit_count = 0
 
 if players:
+    market_values = []
     profits = []
     buy_prices = []
 
     for player in players:
+        market_value = get_market_value(player)
+
+        if market_value is not None:
+            market_values.append(market_value)
+
         profit = get_player_profit(player)
 
         if profit is not None:
@@ -688,6 +725,9 @@ if players:
 
         if buy_price is not None:
             buy_prices.append(buy_price)
+
+    if market_values:
+        calculated_value = sum(market_values)
 
     if profits:
         total_profit = sum(profits)
@@ -708,7 +748,7 @@ col2.metric(
 )
 
 col3.metric(
-    "Summe Kaufpreise",
+    "Summe Einstandspreise",
     format_currency(total_buy),
 )
 
@@ -719,7 +759,8 @@ col4.metric(
 
 st.caption(
     f"Manager-ID: {selected_manager_id} · "
-    f"Spieler geladen: {len(players)}"
+    f"Spieler geladen: {len(players)} · "
+    f"Gewinn ermittelt für {profit_count} Spieler"
 )
 
 
@@ -769,9 +810,10 @@ elif players:
             {
                 "Spieler": get_player_name(player),
                 "Position": position_name,
-                "Kaufpreis": format_currency(
+                "Einstandspreis": format_currency(
                     buy_price
                 ),
+                "Quelle": get_price_source(player),
                 "Marktwert": format_currency(
                     market_value
                 ),
@@ -801,8 +843,9 @@ elif players:
 
     if profit_count == 0:
         st.warning(
-            "Marktwerte sind da, aber kein Kaufpreis. "
-            "Unten stehen die echten Feldnamen."
+            "Marktwerte sind da, aber weder Kaufpreis "
+            "noch Gewinn wurden gefunden. Unten stehen "
+            "die echten Feldnamen."
         )
 
         with st.expander(
