@@ -14,7 +14,7 @@ class KickbaseAPI:
         self.session = requests.Session()
 
     def _headers(self):
-        """Header für Anfragen an die API."""
+        """Erstellt die Header für Kickbase-Anfragen."""
         headers = {
             "Accept": "application/json",
             "Content-Type": "application/json",
@@ -25,18 +25,8 @@ class KickbaseAPI:
 
         return headers
 
-    @staticmethod
-    def _error_text(response):
-        """Kürzt die Serverantwort für eine Fehlermeldung."""
-        text = response.text.strip()
-
-        if not text:
-            return "Keine zusätzliche Servermeldung"
-
-        return text[:500]
-
     def login(self, email, password):
-        """Meldet den Benutzer bei der Kickbase-v4-API an."""
+        """Meldet den Benutzer bei Kickbase an."""
         url = f"{self.base_url}/v4/user/login"
 
         body = {
@@ -66,7 +56,7 @@ class KickbaseAPI:
                 result = response.json()
             except ValueError as error:
                 raise Exception(
-                    "Kickbase hat keine gültige JSON-Antwort gesendet."
+                    "Kickbase hat keine gültige Antwort gesendet."
                 ) from error
 
             self.token = (
@@ -77,163 +67,162 @@ class KickbaseAPI:
 
             if not self.token:
                 raise Exception(
-                    "Der Login wurde angenommen, aber Kickbase hat "
-                    "keinen Zugriffstoken zurückgegeben."
+                    "Die Anmeldung war erfolgreich, aber es wurde "
+                    "kein Zugriffstoken gefunden."
                 )
 
-            self.session.headers.update(self._headers())
             return result
 
         if response.status_code in (400, 401, 403):
             raise Exception(
-                "Anmeldung abgelehnt. Bitte prüfe deine "
-                "Kickbase-E-Mail-Adresse und dein Passwort."
+                "Anmeldung abgelehnt. Bitte prüfe E-Mail und Passwort."
             )
 
         raise Exception(
-            f"Anmeldung fehlgeschlagen (Status {response.status_code}). "
-            f"Servermeldung: {self._error_text(response)}"
+            f"Anmeldung fehlgeschlagen. Status: {response.status_code}"
         )
 
-    def _get_candidates(self, paths, params=None):
-        """
-        Probiert mehrere mögliche API-Pfade.
+    def get(self, path, params=None):
+        """Führt eine authentifizierte GET-Anfrage aus."""
+        if not self.token:
+            raise Exception("Du bist nicht angemeldet.")
 
-        Das ist hilfreich, weil die inoffizielle Dokumentation
-        nicht bei allen Endpunkten vollständig ist.
+        url = f"{self.base_url}{path}"
+
+        try:
+            response = self.session.get(
+                url,
+                params=params,
+                headers=self._headers(),
+                timeout=30,
+            )
+        except requests.exceptions.RequestException as error:
+            raise Exception(
+                f"Kickbase-Anfrage fehlgeschlagen: {error}"
+            ) from error
+
+        if response.status_code == 200:
+            try:
+                return response.json()
+            except ValueError as error:
+                raise Exception(
+                    f"{path} hat keine gültige JSON-Antwort geliefert."
+                ) from error
+
+        if response.status_code == 401:
+            raise Exception(
+                "Die Anmeldung ist abgelaufen. Bitte erneut anmelden."
+            )
+
+        raise Exception(
+            f"{path}: Status {response.status_code}"
+        )
+
+    def try_paths(self, paths, params=None):
         """
+        Testet mehrere mögliche Endpunkte.
+
+        Alle erfolgreichen Antworten werden zurückgegeben.
+        """
+        results = []
         errors = []
 
         for path in paths:
-            url = f"{self.base_url}{path}"
-
             try:
-                response = self.session.get(
-                    url,
-                    params=params,
-                    headers=self._headers(),
-                    timeout=30,
+                result = self.get(path, params=params)
+
+                results.append(
+                    {
+                        "path": path,
+                        "data": result,
+                    }
                 )
-            except requests.exceptions.RequestException as error:
-                errors.append(f"{path}: {error}")
-                continue
+            except Exception as error:
+                errors.append(str(error))
 
-            if response.status_code == 200:
-                try:
-                    return response.json()
-                except ValueError:
-                    errors.append(f"{path}: ungültige JSON-Antwort")
-                    continue
+        return results, errors
 
-            if response.status_code == 401:
-                raise Exception(
-                    "Deine Anmeldung ist nicht mehr gültig. "
-                    "Bitte melde dich erneut an."
-                )
+    def get_league_sources(self, league_id):
+        """
+        Lädt mögliche Quellen für Liga- und Managerinformationen.
+        """
+        paths = [
+            f"/v4/leagues/{league_id}",
+            f"/v4/leagues/{league_id}/info",
+            f"/v4/leagues/{league_id}/overview",
+            f"/v4/leagues/{league_id}/ranking",
+            f"/v4/leagues/{league_id}/dashboard",
+            f"/v4/leagues/{league_id}/users",
+            f"/v4/leagues/{league_id}/stats",
+            f"/leagues/{league_id}",
+            f"/leagues/{league_id}/info",
+            f"/leagues/{league_id}/ranking",
+            f"/leagues/{league_id}/users",
+            f"/leagues/{league_id}/stats",
+        ]
 
-            errors.append(
-                f"{path}: Status {response.status_code}"
-            )
+        return self.try_paths(paths)
 
-        raise Exception(
-            "Keiner der bekannten API-Endpunkte hat funktioniert. "
-            + " | ".join(errors)
+    def get_user_players(self, league_id, user_id):
+        """Versucht, den Kader eines Managers zu laden."""
+        paths = [
+            f"/v4/leagues/{league_id}/users/{user_id}/players",
+            f"/v4/leagues/{league_id}/user/{user_id}/players",
+            f"/v4/leagues/{league_id}/teamcenter/{user_id}",
+            f"/leagues/{league_id}/users/{user_id}/players",
+        ]
+
+        results, errors = self.try_paths(
+            paths,
+            params={"matchDay": 0},
         )
 
-    def get_leagues(self):
-        """Versucht, die Ligen des angemeldeten Accounts separat zu laden."""
-        return self._get_candidates(
-            [
-                "/v4/leagues",
-                "/v4/leagues/selection",
-                "/v4/user/leagues",
-                "/leagues",
-            ]
-        )
+        if results:
+            return results[0]["data"]
 
-    def get_league_users(self, league_id):
-        """Lädt die Manager einer Liga."""
-        return self._get_candidates(
-            [
-                f"/v4/leagues/{league_id}/users",
-                f"/v4/leagues/{league_id}/stats",
-                f"/leagues/{league_id}/users",
-                f"/leagues/{league_id}/stats",
-            ]
-        )
-
-    def get_league_stats(self, league_id):
-        """Lädt die Liga-Statistiken."""
-        return self._get_candidates(
-            [
-                f"/v4/leagues/{league_id}/stats",
-                f"/leagues/{league_id}/stats",
-            ]
-        )
-
-    def get_user_players(self, league_id, user_id, match_day=0):
-        """Lädt den Kader eines Managers."""
-        return self._get_candidates(
-            [
-                f"/v4/leagues/{league_id}/users/{user_id}/players",
-                f"/leagues/{league_id}/users/{user_id}/players",
-            ],
-            params={"matchDay": match_day},
-        )
-
-    def get_lineup(self, league_id):
-        """Lädt die aktuelle eigene Aufstellung."""
-        return self._get_candidates(
-            [
-                f"/v4/leagues/{league_id}/lineup/overview",
-                f"/v4/leagues/{league_id}/lineup",
-                f"/leagues/{league_id}/lineup",
-            ]
-        )
+        raise Exception(" | ".join(errors))
 
     def get_market(self, league_id):
-        """Lädt den Transfermarkt."""
-        return self._get_candidates(
-            [
-                f"/v4/leagues/{league_id}/market",
-                f"/leagues/{league_id}/market",
-            ]
-        )
+        """Versucht, den Transfermarkt zu laden."""
+        paths = [
+            f"/v4/leagues/{league_id}/market",
+            f"/leagues/{league_id}/market",
+        ]
+
+        results, errors = self.try_paths(paths)
+
+        if results:
+            return results[0]["data"]
+
+        raise Exception(" | ".join(errors))
 
     def get_league_feed(self, league_id, start=0):
-        """Lädt den Liga-Feed."""
-        return self._get_candidates(
-            [
-                f"/v4/leagues/{league_id}/feed",
-                f"/leagues/{league_id}/feed",
-            ],
+        """Versucht, den Liga-Feed zu laden."""
+        paths = [
+            f"/v4/leagues/{league_id}/feed",
+            f"/leagues/{league_id}/feed",
+        ]
+
+        results, errors = self.try_paths(
+            paths,
             params={"start": start},
         )
 
-    def get_user_feed(self, league_id, user_id, start=0):
-        """Versucht, den Feed eines Managers zu laden."""
-        return self._get_candidates(
-            [
-                f"/v4/leagues/{league_id}/users/{user_id}/feed",
-                f"/leagues/{league_id}/users/{user_id}/feed",
-            ],
-            params={"start": start},
-        )
+        if results:
+            return results[0]["data"]
 
-    def get_league_me(self, league_id):
-        """Lädt die eigenen Finanzdaten."""
-        return self._get_candidates(
-            [
-                f"/v4/leagues/{league_id}/me",
-                f"/leagues/{league_id}/me",
-            ]
-        )
+        raise Exception(" | ".join(errors))
 
-    def get_user_profile(self, league_id, user_id):
-        """Lädt das Profil eines Managers."""
-        return self._get_candidates(
-            [
-                f"/v4/leagues/{league_id}/users/{user_id}/profile",
-                f"/leagues/{league_id}/users/{user_id}/profile",
-            ]
-        )
+    def get_me(self, league_id):
+        """Versucht, die eigenen Finanzdaten zu laden."""
+        paths = [
+            f"/v4/leagues/{league_id}/me",
+            f"/leagues/{league_id}/me",
+        ]
+
+        results, errors = self.try_paths(paths)
+
+        if results:
+            return results[0]["data"]
+
+        raise Exception(" | ".join(errors))
