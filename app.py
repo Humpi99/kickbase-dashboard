@@ -1,5 +1,7 @@
 """
 Kickbase Liga-Dashboard.
+
+Fokus: Kaderwert und realisierter Gewinn.
 """
 
 import pandas as pd
@@ -9,7 +11,7 @@ from kickbase_api import KickbaseAPI
 
 
 # ---------------------------------------------------------
-# Hilfsfunktionen
+# Grundlegende Hilfsfunktionen
 # ---------------------------------------------------------
 
 def first_value(data, keys, default=None):
@@ -24,32 +26,58 @@ def first_value(data, keys, default=None):
     return default
 
 
-def format_currency(value):
-    """Formatiert einen Geldbetrag."""
+def to_number(value):
+    """Wandelt einen Wert sicher in eine Zahl um."""
     if value is None or value == "":
-        return "—"
+        return None
 
     try:
-        amount = float(value) / 1_000_000
-        text = f"{amount:,.2f}"
-        text = text.replace(",", "X")
-        text = text.replace(".", ",")
-        text = text.replace("X", ".")
-        return f"{text} Mio. €"
+        return float(value)
     except (TypeError, ValueError):
+        return None
+
+
+def format_currency(value):
+    """Formatiert einen Betrag in Millionen Euro."""
+    number = to_number(value)
+
+    if number is None:
         return "—"
+
+    amount = number / 1_000_000
+    text = f"{amount:,.2f}"
+    text = text.replace(",", "X")
+    text = text.replace(".", ",")
+    text = text.replace("X", ".")
+
+    return f"{text} Mio. €"
+
+
+def format_signed_currency(value):
+    """Formatiert einen Betrag mit Vorzeichen."""
+    number = to_number(value)
+
+    if number is None:
+        return "—"
+
+    prefix = "+" if number >= 0 else "-"
+
+    return f"{prefix}{format_currency(abs(number))}"
 
 
 def format_number(value):
-    """Formatiert eine Zahl."""
-    if value is None or value == "":
+    """Formatiert eine einfache Zahl."""
+    number = to_number(value)
+
+    if number is None:
         return "—"
 
-    try:
-        return f"{int(float(value)):,}".replace(",", ".")
-    except (TypeError, ValueError):
-        return str(value)
+    return f"{int(number):,}".replace(",", ".")
 
+
+# ---------------------------------------------------------
+# Namen und IDs
+# ---------------------------------------------------------
 
 def get_league_id(league):
     """Ermittelt die Liga-ID."""
@@ -63,7 +91,7 @@ def get_league_id(league):
 
 
 def get_league_name(league):
-    """Ermittelt den Namen der Liga."""
+    """Ermittelt den Ligennamen."""
     return str(
         first_value(
             league,
@@ -85,7 +113,7 @@ def get_manager_id(manager):
 
 
 def get_manager_name(manager):
-    """Ermittelt den Namen eines Managers."""
+    """Ermittelt den Managernamen."""
     return str(
         first_value(
             manager,
@@ -103,10 +131,10 @@ def get_manager_name(manager):
 
 
 def get_player_name(player):
-    """Ermittelt den Namen eines Spielers."""
+    """Ermittelt den Spielernamen."""
     direct_name = first_value(
         player,
-        ["name", "n", "playerName", "pn"],
+        ["name", "playerName", "pn"],
     )
 
     if direct_name:
@@ -120,16 +148,112 @@ def get_player_name(player):
 
     last_name = first_value(
         player,
-        ["lastName", "ln", "pln"],
+        ["lastName", "ln", "pln", "n"],
         "",
     )
 
     name = f"{first_name} {last_name}".strip()
+
     return name or "Unbekannt"
 
 
+# ---------------------------------------------------------
+# Werte für Kaderwert und Gewinn
+# ---------------------------------------------------------
+
+# Mögliche Feldnamen für den Kaderwert eines Managers
+TEAM_VALUE_KEYS = [
+    "teamValue",
+    "tv",
+    "squadValue",
+    "sv",
+    "tvl",
+    "value",
+    "v",
+]
+
+# Mögliche Feldnamen für den aktuellen Marktwert
+MARKET_VALUE_KEYS = [
+    "marketValue",
+    "mv",
+    "currentValue",
+    "cv",
+    "value",
+]
+
+# Mögliche Feldnamen für den Kaufpreis
+BUY_PRICE_KEYS = [
+    "buyPrice",
+    "bp",
+    "purchasePrice",
+    "pp",
+    "boughtFor",
+    "bf",
+    "price",
+    "pr",
+]
+
+# Mögliche Feldnamen für einen bereits berechneten Gewinn
+PROFIT_KEYS = [
+    "profit",
+    "prof",
+    "pf",
+    "gain",
+    "winnings",
+    "sp",
+]
+
+
+def get_team_value(manager):
+    """Liest den Kaderwert eines Managers."""
+    return to_number(
+        first_value(manager, TEAM_VALUE_KEYS)
+    )
+
+
+def get_market_value(player):
+    """Liest den aktuellen Marktwert eines Spielers."""
+    return to_number(
+        first_value(player, MARKET_VALUE_KEYS)
+    )
+
+
+def get_buy_price(player):
+    """Liest den Kaufpreis eines Spielers."""
+    return to_number(
+        first_value(player, BUY_PRICE_KEYS)
+    )
+
+
+def get_player_profit(player):
+    """
+    Ermittelt den Gewinn eines Spielers.
+
+    Zuerst wird ein vorhandenes Gewinnfeld verwendet.
+    Sonst wird Marktwert minus Kaufpreis gerechnet.
+    """
+    direct_profit = to_number(
+        first_value(player, PROFIT_KEYS)
+    )
+
+    if direct_profit is not None:
+        return direct_profit
+
+    market_value = get_market_value(player)
+    buy_price = get_buy_price(player)
+
+    if market_value is None or buy_price is None:
+        return None
+
+    return market_value - buy_price
+
+
+# ---------------------------------------------------------
+# Erkennung von Listen in API-Antworten
+# ---------------------------------------------------------
+
 def looks_like_league(item):
-    """Prüft, ob ein Objekt wie eine Liga aussieht."""
+    """Prüft, ob ein Objekt eine Liga sein könnte."""
     if not isinstance(item, dict):
         return False
 
@@ -147,17 +271,14 @@ def looks_like_league(item):
 
 
 def looks_like_manager(item):
-    """Prüft, ob ein Objekt wie ein Manager aussieht."""
+    """Prüft, ob ein Objekt ein Manager sein könnte."""
     if not isinstance(item, dict):
         return False
 
-    manager_id = get_manager_id(item)
-    manager_name = get_manager_name(item)
-
-    if not manager_id:
+    if not get_manager_id(item):
         return False
 
-    if manager_name == "Unbekannter Manager":
+    if get_manager_name(item) == "Unbekannter Manager":
         return False
 
     manager_fields = {
@@ -166,6 +287,8 @@ def looks_like_manager(item):
         "ui",
         "teamValue",
         "tv",
+        "squadValue",
+        "sv",
         "points",
         "pt",
         "placement",
@@ -173,45 +296,79 @@ def looks_like_manager(item):
         "teamName",
         "username",
         "budget",
+        "shp",
     }
 
-    return bool(manager_fields.intersection(item.keys()))
+    return bool(
+        manager_fields.intersection(item.keys())
+    )
 
 
-def find_leagues(value, depth=0):
-    """Sucht rekursiv nach der Liga-Liste."""
-    if depth > 7:
+def looks_like_player(item):
+    """Prüft, ob ein Objekt ein Spieler sein könnte."""
+    if not isinstance(item, dict):
+        return False
+
+    has_name = any(
+        key in item
+        for key in [
+            "firstName",
+            "fn",
+            "lastName",
+            "ln",
+            "n",
+        ]
+    )
+
+    has_player_field = any(
+        key in item
+        for key in [
+            "marketValue",
+            "mv",
+            "position",
+            "pos",
+            "totalPoints",
+            "tp",
+            "buyPrice",
+            "bp",
+        ]
+    )
+
+    return has_name and has_player_field
+
+
+def find_list(value, check_function, keys, depth=0):
+    """Sucht rekursiv eine passende Liste."""
+    if depth > 8:
         return []
 
     if isinstance(value, list):
-        leagues = [
+        matches = [
             item for item in value
-            if looks_like_league(item)
+            if check_function(item)
         ]
 
-        if leagues:
-            return leagues
+        if matches:
+            return matches
 
         for item in value:
-            result = find_leagues(item, depth + 1)
+            result = find_list(
+                item,
+                check_function,
+                keys,
+                depth + 1,
+            )
 
             if result:
                 return result
 
     if isinstance(value, dict):
-        preferred_keys = [
-            "leagues",
-            "lgs",
-            "ls",
-            "leagueList",
-            "seasonalLeagues",
-            "srvl",
-        ]
-
-        for key in preferred_keys:
+        for key in keys:
             if key in value:
-                result = find_leagues(
+                result = find_list(
                     value[key],
+                    check_function,
+                    keys,
                     depth + 1,
                 )
 
@@ -222,8 +379,10 @@ def find_leagues(value, depth=0):
             if key in ["tkn", "token", "accessToken"]:
                 continue
 
-            result = find_leagues(
+            result = find_list(
                 nested_value,
+                check_function,
+                keys,
                 depth + 1,
             )
 
@@ -233,134 +392,52 @@ def find_leagues(value, depth=0):
     return []
 
 
-def find_managers(value, depth=0):
-    """Sucht rekursiv nach einer Liste von Managern."""
-    if depth > 8:
-        return []
+def find_leagues(value):
+    """Sucht die Liga-Liste."""
+    return find_list(
+        value,
+        looks_like_league,
+        [
+            "leagues",
+            "lgs",
+            "ls",
+            "srvl",
+        ],
+    )
 
-    if isinstance(value, list):
-        managers = [
-            item for item in value
-            if looks_like_manager(item)
-        ]
 
-        if managers:
-            return managers
-
-        for item in value:
-            result = find_managers(item, depth + 1)
-
-            if result:
-                return result
-
-    if isinstance(value, dict):
-        preferred_keys = [
+def find_managers(value):
+    """Sucht die Managerliste."""
+    return find_list(
+        value,
+        looks_like_manager,
+        [
             "users",
             "us",
             "u",
             "managers",
-            "members",
             "ranking",
             "standings",
-            "participants",
-            "teams",
-            "it",
             "items",
-        ]
-
-        for key in preferred_keys:
-            if key in value:
-                result = find_managers(
-                    value[key],
-                    depth + 1,
-                )
-
-                if result:
-                    return result
-
-        for nested_value in value.values():
-            result = find_managers(
-                nested_value,
-                depth + 1,
-            )
-
-            if result:
-                return result
-
-    return []
+            "it",
+        ],
+    )
 
 
-def find_players(value, depth=0):
-    """Sucht rekursiv nach Spielern."""
-    if depth > 7:
-        return []
-
-    if isinstance(value, list):
-        possible_players = []
-
-        for item in value:
-            if not isinstance(item, dict):
-                continue
-
-            has_name = (
-                "firstName" in item
-                or "fn" in item
-                or "lastName" in item
-                or "ln" in item
-                or "n" in item
-            )
-
-            has_player_value = (
-                "marketValue" in item
-                or "mv" in item
-                or "position" in item
-                or "pos" in item
-                or "totalPoints" in item
-                or "tp" in item
-            )
-
-            if has_name and has_player_value:
-                possible_players.append(item)
-
-        if possible_players:
-            return possible_players
-
-        for item in value:
-            result = find_players(item, depth + 1)
-
-            if result:
-                return result
-
-    if isinstance(value, dict):
-        preferred_keys = [
+def find_players(value):
+    """Sucht die Spielerliste."""
+    return find_list(
+        value,
+        looks_like_player,
+        [
             "players",
             "p",
-            "it",
             "items",
-            "lp",
+            "it",
             "squad",
-        ]
-
-        for key in preferred_keys:
-            if key in value:
-                result = find_players(
-                    value[key],
-                    depth + 1,
-                )
-
-                if result:
-                    return result
-
-        for nested_value in value.values():
-            result = find_players(
-                nested_value,
-                depth + 1,
-            )
-
-            if result:
-                return result
-
-    return []
+            "lp",
+        ],
+    )
 
 
 def safe_structure(value, depth=0):
@@ -404,61 +481,8 @@ def safe_structure(value, depth=0):
     return f"<{type(value).__name__}>"
 
 
-def create_player_table(players):
-    """Erstellt die Tabelle für den Kader."""
-    positions = {
-        1: "Torwart",
-        2: "Abwehr",
-        3: "Mittelfeld",
-        4: "Sturm",
-    }
-
-    rows = []
-
-    for player in players:
-        position = first_value(
-            player,
-            ["position", "pos"],
-        )
-
-        try:
-            position_name = positions.get(
-                int(position),
-                "Unbekannt",
-            )
-        except (TypeError, ValueError):
-            position_name = "Unbekannt"
-
-        rows.append(
-            {
-                "Spieler": get_player_name(player),
-                "Position": position_name,
-                "Marktwert": format_currency(
-                    first_value(
-                        player,
-                        ["marketValue", "mv"],
-                    )
-                ),
-                "Ø Punkte": format_number(
-                    first_value(
-                        player,
-                        ["averagePoints", "ap"],
-                    )
-                ),
-                "Gesamtpunkte": format_number(
-                    first_value(
-                        player,
-                        ["totalPoints", "tp", "points"],
-                    )
-                ),
-            }
-        )
-
-    return pd.DataFrame(rows)
-
-
 # ---------------------------------------------------------
-# Streamlit-Einstellungen
+# Seiteneinstellungen
 # ---------------------------------------------------------
 
 st.set_page_config(
@@ -501,9 +525,7 @@ if not st.session_state.get("logged_in"):
             )
         else:
             try:
-                with st.spinner(
-                    "Anmeldung bei Kickbase läuft …"
-                ):
+                with st.spinner("Anmeldung läuft …"):
                     api = KickbaseAPI()
                     login_result = api.login(
                         email,
@@ -514,14 +536,12 @@ if not st.session_state.get("logged_in"):
 
                 if not leagues:
                     st.error(
-                        "Der Login funktioniert, aber die "
-                        "Liga-Liste wurde nicht erkannt."
+                        "Login erfolgreich, aber keine "
+                        "Liga erkannt."
                     )
-
                     st.json(
                         safe_structure(login_result)
                     )
-
                     st.stop()
 
                 st.session_state["api"] = api
@@ -535,11 +555,7 @@ if not st.session_state.get("logged_in"):
                 st.sidebar.error(str(error))
 
     st.title("⚽ Kickbase Liga-Dashboard")
-
-    st.info(
-        "Gib links deine Kickbase-Zugangsdaten ein."
-    )
-
+    st.info("Bitte links anmelden.")
     st.stop()
 
 
@@ -563,61 +579,142 @@ selected_league = leagues[league_index]
 league_id = get_league_id(selected_league)
 league_name = get_league_name(selected_league)
 
+day_number = st.sidebar.number_input(
+    "Spieltag",
+    min_value=1,
+    max_value=34,
+    value=1,
+    step=1,
+)
+
 st.title(f"⚽ {league_name}")
 
 
 # ---------------------------------------------------------
-# Manager suchen
+# Ranking laden (enthält Kaderwerte)
 # ---------------------------------------------------------
 
-managers = find_managers(selected_league)
-manager_sources = []
-manager_errors = []
+managers = []
+ranking_sources = []
+ranking_errors = []
+ranking_path = None
 
+with st.spinner("Ranking wird geladen …"):
+    ranking_sources, ranking_errors = api.get_ranking(
+        league_id,
+        int(day_number),
+    )
+
+# Bevorzugt die Quelle nehmen, die Kaderwerte enthält.
+for source in ranking_sources:
+    found = find_managers(source["data"])
+
+    if not found:
+        continue
+
+    has_team_value = any(
+        get_team_value(manager) is not None
+        for manager in found
+    )
+
+    if has_team_value:
+        managers = found
+        ranking_path = source["path"]
+        break
+
+    if not managers:
+        managers = found
+        ranking_path = source["path"]
+
+# Falls das Ranking nichts liefert, andere Quellen testen.
 if not managers:
-    with st.spinner("Manager der Liga werden geladen …"):
-        manager_sources, manager_errors = (
-            api.get_league_sources(league_id)
-        )
+    other_sources, other_errors = (
+        api.get_league_sources(league_id)
+    )
 
-    for source in manager_sources:
+    ranking_errors.extend(other_errors)
+
+    for source in other_sources:
         found = find_managers(source["data"])
 
         if found:
             managers = found
+            ranking_path = source["path"]
+            ranking_sources.append(source)
             break
 
 if not managers:
     managers = find_managers(login_result)
 
-
-# ---------------------------------------------------------
-# Wenn keine Manager gefunden wurden
-# ---------------------------------------------------------
-
 if not managers:
     st.error(
-        "Die Liga wurde gefunden, aber die Managerliste "
-        "konnte nicht erkannt werden."
+        "Es konnten keine Manager geladen werden."
     )
 
-    for source in manager_sources:
-        with st.expander(
-            f"Struktur von {source['path']}"
-        ):
-            st.json(
-                safe_structure(source["data"])
-            )
-
-    with st.expander("Fehler der Endpunkte"):
-        st.write(manager_errors)
+    with st.expander("Fehlerdetails"):
+        st.write(ranking_errors)
 
     st.stop()
 
 
 # ---------------------------------------------------------
+# Liga-Ranking als Tabelle
+# ---------------------------------------------------------
+
+st.subheader("🏆 Liga-Ranking nach Kaderwert")
+
+ranking_rows = []
+missing_team_value = 0
+
+for manager in managers:
+    team_value = get_team_value(manager)
+
+    if team_value is None:
+        missing_team_value += 1
+
+    ranking_rows.append(
+        {
+            "Manager": get_manager_name(manager),
+            "Kaderwert": format_currency(team_value),
+            "_sort": team_value or 0,
+        }
+    )
+
+ranking_frame = pd.DataFrame(ranking_rows)
+ranking_frame = ranking_frame.sort_values(
+    "_sort",
+    ascending=False,
+)
+ranking_frame = ranking_frame.drop(columns=["_sort"])
+
+st.dataframe(
+    ranking_frame,
+    use_container_width=True,
+    hide_index=True,
+)
+
+if ranking_path:
+    st.caption(f"Datenquelle: {ranking_path}")
+
+# Hinweis, falls der Kaderwert weiterhin fehlt.
+if missing_team_value == len(managers):
+    st.warning(
+        "Der Kaderwert wurde in dieser Antwort nicht "
+        "gefunden. Unten siehst du die echten Feldnamen."
+    )
+
+    with st.expander(
+        "Verfügbare Felder eines Managers"
+    ):
+        st.write(sorted(managers[0].keys()))
+        st.json(safe_structure(managers[0]))
+
+
+# ---------------------------------------------------------
 # Manager auswählen
 # ---------------------------------------------------------
+
+st.markdown("---")
 
 manager_index = st.selectbox(
     "👤 Manager auswählen",
@@ -631,56 +728,6 @@ selected_manager = managers[manager_index]
 selected_user_id = get_manager_id(selected_manager)
 selected_manager_name = get_manager_name(
     selected_manager
-)
-
-
-# ---------------------------------------------------------
-# Übersicht
-# ---------------------------------------------------------
-
-col1, col2, col3 = st.columns(3)
-
-col1.metric(
-    "Kaderwert",
-    format_currency(
-        first_value(
-            selected_manager,
-            ["teamValue", "tv", "squadValue", "sv"],
-        )
-    ),
-)
-
-col2.metric(
-    "Punkte",
-    format_number(
-        first_value(
-            selected_manager,
-            ["points", "pt", "totalPoints", "tp"],
-        )
-    ),
-)
-
-col3.metric(
-    "Platzierung",
-    format_number(
-        first_value(
-            selected_manager,
-            ["rank", "placement", "r", "pl"],
-        )
-    ),
-)
-
-
-# ---------------------------------------------------------
-# Spieltag auswählen
-# ---------------------------------------------------------
-
-day_number = st.number_input(
-    "Spieltag",
-    min_value=1,
-    max_value=34,
-    value=1,
-    step=1,
 )
 
 
@@ -707,304 +754,174 @@ except Exception as error:
 
 
 # ---------------------------------------------------------
-# Tabs
+# Kennzahlen des ausgewählten Managers
 # ---------------------------------------------------------
 
-tabs = st.tabs(
-    [
-        "📋 Kader",
-        "🏪 Transfermarkt",
-        "💰 Finanzen",
-        "📜 Transferhistorie",
-    ]
+st.subheader(
+    f"📊 Übersicht: {selected_manager_name}"
 )
 
-tab_kader = tabs[0]
-tab_market = tabs[1]
-tab_finance = tabs[2]
-tab_history = tabs[3]
+# Kaderwert aus dem Ranking
+team_value = get_team_value(selected_manager)
 
+# Ersatzwert: Summe der Marktwerte im Kader
+calculated_team_value = None
 
-# ---------------------------------------------------------
-# Tab: Kader
-# ---------------------------------------------------------
+if players:
+    values = [
+        get_market_value(player)
+        for player in players
+    ]
 
-with tab_kader:
-    st.subheader(
-        f"Kader von {selected_manager_name}"
+    values = [
+        value for value in values
+        if value is not None
+    ]
+
+    if values:
+        calculated_team_value = sum(values)
+
+# Gewinn über alle Spieler
+total_profit = None
+players_with_profit = 0
+
+if players:
+    profits = []
+
+    for player in players:
+        profit = get_player_profit(player)
+
+        if profit is not None:
+            profits.append(profit)
+            players_with_profit += 1
+
+    if profits:
+        total_profit = sum(profits)
+
+overview_col1, overview_col2, overview_col3 = (
+    st.columns(3)
+)
+
+overview_col1.metric(
+    "Kaderwert laut Ranking",
+    format_currency(team_value),
+)
+
+overview_col2.metric(
+    "Kaderwert berechnet",
+    format_currency(calculated_team_value),
+)
+
+overview_col3.metric(
+    "Gewinn gesamt",
+    format_signed_currency(total_profit),
+)
+
+if players and total_profit is not None:
+    st.caption(
+        f"Gewinn berechnet aus {players_with_profit} "
+        f"von {len(players)} Spielern."
     )
 
-    if players_error:
-        st.error(
-            f"Kader konnte nicht geladen werden: "
-            f"{players_error}"
-        )
-
-    elif players:
-        st.metric("Anzahl Spieler", len(players))
-
-        st.dataframe(
-            create_player_table(players),
-            use_container_width=True,
-            hide_index=True,
-        )
-
-    else:
-        st.info(
-            "Die Antwort kam an, aber es wurden keine "
-            "Spieler erkannt."
-        )
-
-        if player_result is not None:
-            with st.expander(
-                "Sichere Struktur anzeigen"
-            ):
-                st.json(
-                    safe_structure(player_result)
-                )
-
 
 # ---------------------------------------------------------
-# Tab: Transfermarkt
+# Kadertabelle mit Gewinn
 # ---------------------------------------------------------
 
-with tab_market:
-    st.subheader("Transfermarkt")
+st.subheader(
+    f"📋 Kader von {selected_manager_name}"
+)
 
-    try:
-        market_result = api.get_market(league_id)
-        market_players = find_players(market_result)
-
-        if market_players:
-            market_rows = []
-
-            for player in market_players:
-                owner_id = first_value(
-                    player,
-                    [
-                        "userId",
-                        "uid",
-                        "ui",
-                        "ownerId",
-                        "sellerId",
-                    ],
-                )
-
-                if owner_id is not None:
-                    owner_text = (
-                        selected_manager_name
-                        if str(owner_id) == selected_user_id
-                        else "Anderer Manager"
-                    )
-                else:
-                    owner_text = "Kickbase"
-
-                market_rows.append(
-                    {
-                        "Spieler": get_player_name(player),
-                        "Marktwert": format_currency(
-                            first_value(
-                                player,
-                                ["marketValue", "mv"],
-                            )
-                        ),
-                        "Preis": format_currency(
-                            first_value(
-                                player,
-                                ["price", "pr", "value"],
-                            )
-                        ),
-                        "Anbieter": owner_text,
-                    }
-                )
-
-            st.dataframe(
-                pd.DataFrame(market_rows),
-                use_container_width=True,
-                hide_index=True,
-            )
-
-        else:
-            st.info(
-                "Es wurden keine Marktspieler erkannt."
-            )
-
-            with st.expander(
-                "Sichere Struktur anzeigen"
-            ):
-                st.json(
-                    safe_structure(market_result)
-                )
-
-    except Exception as error:
-        st.warning(
-            f"Transfermarkt konnte nicht geladen "
-            f"werden: {error}"
-        )
-
-
-# ---------------------------------------------------------
-# Tab: Finanzen
-# ---------------------------------------------------------
-
-with tab_finance:
-    st.subheader(
-        f"Finanzen von {selected_manager_name}"
+if players_error:
+    st.error(
+        f"Kader konnte nicht geladen werden: "
+        f"{players_error}"
     )
 
-    team_value = first_value(
-        selected_manager,
-        ["teamValue", "tv", "squadValue", "sv"],
-    )
-
-    if team_value is None and players:
-        values = []
-
-        for player in players:
-            market_value = first_value(
-                player,
-                ["marketValue", "mv"],
-                0,
-            )
-
-            try:
-                values.append(float(market_value))
-            except (TypeError, ValueError):
-                pass
-
-        if values:
-            team_value = sum(values)
-
-    finance_col1, finance_col2 = st.columns(2)
-
-    finance_col1.metric(
-        "Kaderwert",
-        format_currency(team_value),
-    )
-
-    try:
-        me_result = api.get_me(league_id)
-
-        budget = first_value(
-            me_result,
-            ["budget", "b", "cash"],
-        )
-
-        finance_col2.metric(
-            "Eigenes Budget",
-            format_currency(budget),
-        )
-
-    except Exception:
-        finance_col2.metric(
-            "Eigenes Budget",
-            "Nicht verfügbar",
-        )
-
-
-# ---------------------------------------------------------
-# Tab: Transferhistorie
-# ---------------------------------------------------------
-
-with tab_history:
-    st.subheader("Transferhistorie der Liga")
-
-    feed_items = []
-
-    try:
-        for start in [0, 25, 50, 75]:
-            feed_result = api.get_league_feed(
-                league_id,
-                start,
-            )
-
-            if isinstance(feed_result, dict):
-                page_items = (
-                    feed_result.get("items")
-                    or feed_result.get("it")
-                    or []
-                )
-            else:
-                page_items = []
-
-            if not page_items:
-                break
-
-            feed_items.extend(page_items)
-
-    except Exception as error:
-        st.warning(
-            f"Feed konnte nicht geladen werden: {error}"
-        )
-
-    event_names = {
-        2: "Verkauf",
-        3: "Auf Markt gestellt",
-        12: "Kauf",
+elif players:
+    positions = {
+        1: "Torwart",
+        2: "Abwehr",
+        3: "Mittelfeld",
+        4: "Sturm",
     }
 
-    transfer_rows = []
+    player_rows = []
 
-    for item in feed_items:
-        raw_type = first_value(item, ["type", "t"])
+    for player in players:
+        position = first_value(
+            player,
+            ["position", "pos"],
+        )
 
         try:
-            item_type = int(raw_type)
+            position_name = positions.get(
+                int(position),
+                "Unbekannt",
+            )
         except (TypeError, ValueError):
-            continue
+            position_name = "Unbekannt"
 
-        if item_type not in event_names:
-            continue
+        market_value = get_market_value(player)
+        buy_price = get_buy_price(player)
+        profit = get_player_profit(player)
 
-        meta = first_value(item, ["meta", "m"], {})
-
-        if not isinstance(meta, dict):
-            meta = {}
-
-        player_name = get_player_name(meta)
-
-        if player_name == "Unbekannt":
-            player_name = get_player_name(item)
-
-        amount = first_value(
-            meta,
-            ["value", "v", "price", "pr", "mv"],
-        )
-
-        date = first_value(
-            item,
-            ["date", "d", "createdAt"],
-            "—",
-        )
-
-        if isinstance(date, str) and "T" in date:
-            date = date.split("T")[0]
-
-        transfer_rows.append(
+        player_rows.append(
             {
-                "Datum": date,
-                "Typ": event_names[item_type],
-                "Spieler": player_name,
-                "Betrag": format_currency(amount),
+                "Spieler": get_player_name(player),
+                "Position": position_name,
+                "Kaufpreis": format_currency(buy_price),
+                "Marktwert": format_currency(
+                    market_value
+                ),
+                "Gewinn": format_signed_currency(
+                    profit
+                ),
+                "_sort": profit
+                if profit is not None
+                else -999_999_999,
             }
         )
 
-    if transfer_rows:
-        st.dataframe(
-            pd.DataFrame(transfer_rows),
-            use_container_width=True,
-            hide_index=True,
+    player_frame = pd.DataFrame(player_rows)
+    player_frame = player_frame.sort_values(
+        "_sort",
+        ascending=False,
+    )
+    player_frame = player_frame.drop(
+        columns=["_sort"]
+    )
+
+    st.dataframe(
+        player_frame,
+        use_container_width=True,
+        hide_index=True,
+    )
+
+    # Hinweis, falls Kaufpreise fehlen.
+    if players_with_profit == 0:
+        st.warning(
+            "Es wurde kein Kaufpreis gefunden. "
+            "Unten stehen die echten Feldnamen eines "
+            "Spielers, damit der richtige Wert "
+            "eingebaut werden kann."
         )
 
-    else:
-        st.info(
-            "Es wurden keine Transferereignisse erkannt."
-        )
+        with st.expander(
+            "Verfügbare Felder eines Spielers"
+        ):
+            st.write(sorted(players[0].keys()))
+            st.json(safe_structure(players[0]))
 
-        if feed_items:
-            with st.expander(
-                "Sichere Feed-Struktur anzeigen"
-            ):
-                st.json(
-                    safe_structure(feed_items[:3])
-                )
+else:
+    st.info(
+        "Es wurden keine Spieler erkannt."
+    )
+
+    if player_result is not None:
+        with st.expander(
+            "Sichere Struktur anzeigen"
+        ):
+            st.json(
+                safe_structure(player_result)
+            )
