@@ -1,125 +1,205 @@
 """
-Kickbase API Client
-Dieses Modul kommuniziert mit der Kickbase API (inoffiziell).
-Authentifizierung läuft über Cookie (kkstrauth).
+Einfacher Client für die inoffizielle Kickbase-v4-API.
+
+Wichtig:
+Die API ist nicht offiziell und kann sich verändern.
 """
 
 import requests
 
 
 class KickbaseAPI:
-    """Klasse zur Kommunikation mit der Kickbase API."""
+    """Kommunikation mit der Kickbase-v4-API."""
 
     def __init__(self):
         self.base_url = "https://api.kickbase.com"
         self.token = None
+
+        # Eine Session behält Header und Cookies während der Sitzung.
         self.session = requests.Session()
 
     def _headers(self):
-        """Erstellt die HTTP-Header mit Cookie-Auth."""
+        """Erstellt die Header für authentifizierte Anfragen."""
         headers = {
             "Accept": "application/json",
-            "Content-Type": "application/json"
+            "Content-Type": "application/json",
         }
+
         if self.token:
-            headers["Cookie"] = f"kkstrauth={self.token}"
             headers["Authorization"] = f"Bearer {self.token}"
+
         return headers
 
-def login(self, email, password):
-    """Meldet sich über die aktuelle Kickbase-v4-API an."""
+    @staticmethod
+    def _response_text(response):
+        """Kürzt die Serverantwort für Fehlermeldungen."""
+        text = response.text.strip()
 
-    url = f"{self.base_url}/v4/user/login"
+        if not text:
+            return "Keine zusätzliche Servermeldung"
 
-    data = {
-        "em": email,
-        "pass": password,
-        "loy": False,
-        "rep": {}
-    }
+        return text[:500]
 
-    headers = {
-        "Accept": "application/json",
-        "Content-Type": "application/json"
-    }
+    def login(self, email, password):
+        """
+        Meldet den Benutzer bei Kickbase an.
 
-    try:
-        response = self.session.post(
-            url,
-            json=data,
-            headers=headers,
-            timeout=20
-        )
-    except requests.exceptions.RequestException as error:
-        raise Exception(f"Kickbase ist nicht erreichbar: {error}")
+        Die aktuelle v4-API erwartet:
+        em   = E-Mail
+        pass = Passwort
+        loy  = Login-Option
+        rep  = Geräteinformationen
+        """
+        url = f"{self.base_url}/v4/user/login"
 
-    if response.status_code == 200:
-        result = response.json()
+        body = {
+            "em": email.strip(),
+            "pass": password,
+            "loy": False,
+            "rep": {},
+        }
 
-        # In der aktuellen v4-Antwort heißt der Token „tkn“.
-        self.token = result.get("tkn") or result.get("token")
-
-        if not self.token:
+        try:
+            response = self.session.post(
+                url,
+                json=body,
+                headers={
+                    "Accept": "application/json",
+                    "Content-Type": "application/json",
+                },
+                timeout=20,
+            )
+        except requests.exceptions.RequestException as error:
             raise Exception(
-                "Login war erfolgreich, aber die Antwort enthält keinen Token."
+                f"Kickbase ist momentan nicht erreichbar: {error}"
+            ) from error
+
+        if response.status_code == 200:
+            try:
+                result = response.json()
+            except ValueError as error:
+                raise Exception(
+                    "Kickbase hat keine gültige JSON-Antwort gesendet."
+                ) from error
+
+            # In v4 heißt der Token normalerweise „tkn“.
+            self.token = result.get("tkn") or result.get("token")
+
+            if not self.token:
+                raise Exception(
+                    "Die Anmeldung war erfolgreich, aber es wurde "
+                    "kein Zugriffstoken zurückgegeben."
+                )
+
+            # Token dauerhaft für weitere Session-Anfragen setzen.
+            self.session.headers.update(self._headers())
+
+            return result
+
+        if response.status_code in (400, 401, 403):
+            raise Exception(
+                "Anmeldung abgelehnt. Bitte prüfe deine "
+                "Kickbase-E-Mail-Adresse und dein Passwort."
             )
 
-        return result
-
-    if response.status_code in (400, 401, 403):
         raise Exception(
-            "Login abgelehnt. Bitte E-Mail und Passwort prüfen."
+            f"Anmeldung fehlgeschlagen (Status {response.status_code}). "
+            f"Servermeldung: {self._response_text(response)}"
         )
 
-    raise Exception(
-        f"Login fehlgeschlagen (Status {response.status_code}): "
-        f"{response.text[:300]}"
-    )
+    def _get(self, path, params=None):
+        """Führt eine authentifizierte GET-Anfrage aus."""
+        if not self.token:
+            raise Exception("Du bist nicht bei Kickbase angemeldet.")
 
-    def _get(self, path):
-        """Führt einen GET-Request aus."""
-        # Versuche mit und ohne /v4 Prefix
-        urls_to_try = [
-            f"{self.base_url}/v4{path}",
-            f"{self.base_url}{path}",
-        ]
+        url = f"{self.base_url}{path}"
 
-        for url in urls_to_try:
-            response = self.session.get(url, headers=self._headers())
-            if response.status_code == 200:
+        try:
+            response = self.session.get(
+                url,
+                params=params,
+                headers=self._headers(),
+                timeout=20,
+            )
+        except requests.exceptions.RequestException as error:
+            raise Exception(
+                f"Kickbase-Anfrage fehlgeschlagen: {error}"
+            ) from error
+
+        if response.status_code == 200:
+            try:
                 return response.json()
+            except ValueError as error:
+                raise Exception(
+                    "Kickbase hat keine gültige JSON-Antwort gesendet."
+                ) from error
 
-        # Wenn nichts klappt, letzten Fehler melden
-        raise Exception(f"Anfrage fehlgeschlagen für {path} (Status {response.status_code})")
+        if response.status_code == 401:
+            raise Exception(
+                "Deine Anmeldung ist nicht mehr gültig. "
+                "Bitte lade die App neu und melde dich erneut an."
+            )
+
+        if response.status_code == 403:
+            raise Exception(
+                "Für diese Daten besitzt dein Account keine Berechtigung."
+            )
+
+        if response.status_code == 404:
+            raise Exception(
+                f"Der Kickbase-Endpunkt wurde nicht gefunden: {path}"
+            )
+
+        raise Exception(
+            f"Anfrage fehlgeschlagen (Status {response.status_code}). "
+            f"Servermeldung: {self._response_text(response)}"
+        )
 
     def get_league_stats(self, league_id):
-        """Holt die Liga-Statistiken (Ranking aller Manager)."""
-        return self._get(f"/leagues/{league_id}/stats")
+        """Lädt Ranking und Statistiken der Liga."""
+        return self._get(f"/v4/leagues/{league_id}/stats")
 
     def get_user_players(self, league_id, user_id, match_day=0):
-        """Holt alle Spieler eines bestimmten Managers."""
-        return self._get(f"/leagues/{league_id}/users/{user_id}/players?matchDay={match_day}")
+        """Lädt den Kader eines Managers."""
+        return self._get(
+            f"/v4/leagues/{league_id}/users/{user_id}/players",
+            params={"matchDay": match_day},
+        )
 
     def get_lineup(self, league_id):
-        """Holt die aktuelle Aufstellung (nur eigener Account)."""
-        return self._get(f"/leagues/{league_id}/lineup/overview")
+        """Lädt die eigene aktuelle Aufstellung."""
+        return self._get(
+            f"/v4/leagues/{league_id}/lineup/overview"
+        )
 
     def get_market(self, league_id):
-        """Holt den aktuellen Transfermarkt der Liga."""
-        return self._get(f"/leagues/{league_id}/market")
+        """Lädt den Transfermarkt der Liga."""
+        return self._get(
+            f"/v4/leagues/{league_id}/market"
+        )
 
     def get_league_feed(self, league_id, start=0):
-        """Holt den Liga-Feed (Aktivitäten wie Transfers etc.)."""
-        return self._get(f"/leagues/{league_id}/feed?start={start}")
+        """Lädt eine Seite des Liga-Feeds."""
+        return self._get(
+            f"/v4/leagues/{league_id}/feed",
+            params={"start": start},
+        )
 
     def get_user_feed(self, league_id, user_id, start=0):
-        """Holt den Feed eines bestimmten Users (seine Transferhistorie)."""
-        return self._get(f"/leagues/{league_id}/users/{user_id}/feed?start={start}")
+        """Versucht, den Feed eines bestimmten Managers zu laden."""
+        return self._get(
+            f"/v4/leagues/{league_id}/users/{user_id}/feed",
+            params={"start": start},
+        )
 
     def get_league_me(self, league_id):
-        """Holt eigene Liga-Daten (Budget, Kaderwert, Punkte)."""
-        return self._get(f"/leagues/{league_id}/me")
+        """Lädt eigene Finanz- und Ligaangaben."""
+        return self._get(
+            f"/v4/leagues/{league_id}/me"
+        )
 
     def get_user_profile(self, league_id, user_id):
-        """Holt das Profil eines Managers in der Liga."""
-        return self._get(f"/leagues/{league_id}/users/{user_id}/profile")
+        """Lädt das Profil eines Managers."""
+        return self._get(
+            f"/v4/leagues/{league_id}/users/{user_id}/profile"
+        )
