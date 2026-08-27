@@ -264,7 +264,7 @@ def is_in_lineup(player):
 
 
 # ---------------------------------------------------------
-# Hilfsfunktion für die Datenansicht
+# Datenansicht
 # ---------------------------------------------------------
 
 def flatten_fields(value, prefix="", depth=0):
@@ -1158,8 +1158,98 @@ with st.expander("🔬 Alle Daten zu einem Spieler"):
 
 
 # ---------------------------------------------------------
-# Diagnose
+# Alle Daten zu einem Manager
 # ---------------------------------------------------------
+
+st.markdown("---")
+
+st.subheader("🗂️ Alle Daten zu diesem Manager")
+
+st.write(
+    "Hier werden alle bekannten Manager-Endpunkte "
+    "getestet und ihr Inhalt angezeigt."
+)
+
+if st.button("Manager-Daten laden"):
+    with st.spinner("Endpunkte werden getestet …"):
+        manager_sources, manager_errors = (
+            api.explore_manager(
+                league_id,
+                selected_manager_id,
+            )
+        )
+
+    st.session_state["manager_sources"] = manager_sources
+    st.session_state["manager_errors"] = manager_errors
+
+manager_sources = st.session_state.get(
+    "manager_sources",
+    [],
+)
+
+manager_errors = st.session_state.get(
+    "manager_errors",
+    [],
+)
+
+if manager_sources:
+    st.success(
+        f"{len(manager_sources)} Endpunkte haben "
+        "geantwortet."
+    )
+
+    overview_rows = []
+
+    for source in manager_sources:
+        data = source["data"]
+
+        if isinstance(data, dict):
+            content = ", ".join(sorted(data.keys()))
+        elif isinstance(data, list):
+            content = f"Liste mit {len(data)} Einträgen"
+        else:
+            content = str(type(data).__name__)
+
+        overview_rows.append(
+            {
+                "Endpunkt": source["path"],
+                "Enthaltene Felder": content,
+            }
+        )
+
+    st.dataframe(
+        pd.DataFrame(overview_rows),
+        use_container_width=True,
+        hide_index=True,
+    )
+
+    st.write("**Inhalt der einzelnen Endpunkte:**")
+
+    for source in manager_sources:
+        with st.expander(source["path"]):
+            fields = flatten_fields(source["data"])
+
+            if fields:
+                st.dataframe(
+                    pd.DataFrame(fields),
+                    use_container_width=True,
+                    hide_index=True,
+                    height=350,
+                )
+
+            st.write("**Rohdaten:**")
+            st.json(source["data"])
+
+if manager_errors:
+    with st.expander("Endpunkte ohne Antwort"):
+        st.write(manager_errors)
+
+
+# ---------------------------------------------------------
+# Diagnose der Transferquellen
+# ---------------------------------------------------------
+
+st.markdown("---")
 
 with st.expander("🔎 Diagnose der Transferquellen"):
     if feed_samples:
