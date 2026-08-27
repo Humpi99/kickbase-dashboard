@@ -137,39 +137,42 @@ class KickbaseAPI:
 
         return results, errors
 
-    def get_ranking(self, league_id, day_number=None):
+    def get_ranking(self, league_id):
         """Lädt das Liga-Ranking mit den Kaderwerten."""
-        params = {}
-
-        if day_number is not None:
-            params["dayNumber"] = day_number
-
         paths = [
             f"/v4/leagues/{league_id}/ranking",
         ]
 
-        return self.try_paths(
-            paths,
-            params=params if params else None,
+        return self.try_paths(paths)
+
+    def get_manager_squad(self, league_id, manager_id):
+        """
+        Lädt den Kader EINES bestimmten Managers.
+
+        Wichtig: Nur dieser Pfad liefert fremde Kader.
+        Der Pfad ohne Manager-ID gibt immer das
+        eigene Team zurück.
+        """
+        path = (
+            f"/v4/leagues/{league_id}"
+            f"/managers/{manager_id}/squad"
         )
 
-    def get_squad_candidates(self, league_id, user_id):
-        """
-        Probiert alle bekannten Pfade für den Kader
-        eines Managers durch.
+        return self.get(path)
 
-        Der Kader enthält Marktwerte und meistens
-        auch den Kaufpreis.
+    def get_manager_performance(self, league_id, manager_id):
+        """
+        Lädt Zusatzdaten eines Managers.
+
+        Enthält je nach Liga auch Transferdaten.
         """
         paths = [
-            f"/v4/leagues/{league_id}/managers/{user_id}/squad",
-            f"/v4/leagues/{league_id}/users/{user_id}/squad",
-            f"/v4/leagues/{league_id}/managers/{user_id}/players",
-            f"/v4/leagues/{league_id}/managers/{user_id}",
-            f"/v4/leagues/{league_id}/users/{user_id}/profile",
-            f"/v4/leagues/{league_id}/users/{user_id}",
-            f"/v4/leagues/{league_id}/squad",
-            f"/v4/leagues/{league_id}/lineup",
+            f"/v4/leagues/{league_id}"
+            f"/managers/{manager_id}/performance",
+            f"/v4/leagues/{league_id}"
+            f"/managers/{manager_id}/dashboard",
+            f"/v4/leagues/{league_id}"
+            f"/managers/{manager_id}",
         ]
 
         return self.try_paths(paths)
@@ -181,16 +184,3 @@ class KickbaseAPI:
         ]
 
         return self.try_paths(paths)
-
-    def get_me(self, league_id):
-        """Lädt die eigenen Finanzdaten."""
-        paths = [
-            f"/v4/leagues/{league_id}/me",
-        ]
-
-        results, errors = self.try_paths(paths)
-
-        if results:
-            return results[0]["data"]
-
-        raise Exception(" | ".join(errors))
