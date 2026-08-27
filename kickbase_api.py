@@ -67,15 +67,14 @@ class KickbaseAPI:
 
             if not self.token:
                 raise Exception(
-                    "Die Anmeldung war erfolgreich, aber es wurde "
-                    "kein Zugriffstoken gefunden."
+                    "Anmeldung erfolgreich, aber kein Token gefunden."
                 )
 
             return result
 
         if response.status_code in (400, 401, 403):
             raise Exception(
-                "Anmeldung abgelehnt. Bitte prüfe E-Mail und Passwort."
+                "Anmeldung abgelehnt. Bitte E-Mail und Passwort prüfen."
             )
 
         raise Exception(
@@ -106,12 +105,12 @@ class KickbaseAPI:
                 return response.json()
             except ValueError as error:
                 raise Exception(
-                    f"{path} hat keine gültige JSON-Antwort geliefert."
+                    f"{path}: keine gültige JSON-Antwort"
                 ) from error
 
         if response.status_code == 401:
             raise Exception(
-                "Die Anmeldung ist abgelaufen. Bitte erneut anmelden."
+                "Anmeldung abgelaufen. Bitte neu anmelden."
             )
 
         raise Exception(
@@ -119,18 +118,18 @@ class KickbaseAPI:
         )
 
     def try_paths(self, paths, params=None):
-        """Testet mehrere mögliche Endpunkte."""
+        """Testet mehrere Endpunkte und sammelt alle Treffer."""
         results = []
         errors = []
 
         for path in paths:
             try:
-                result = self.get(path, params=params)
+                data = self.get(path, params=params)
 
                 results.append(
                     {
                         "path": path,
-                        "data": result,
+                        "data": data,
                     }
                 )
             except Exception as error:
@@ -139,12 +138,7 @@ class KickbaseAPI:
         return results, errors
 
     def get_ranking(self, league_id, day_number=None):
-        """
-        Lädt das Liga-Ranking.
-
-        Das Ranking enthält in der App die Kaderwerte
-        aller Managerinnen und Manager.
-        """
+        """Lädt das Liga-Ranking mit den Kaderwerten."""
         params = {}
 
         if day_number is not None:
@@ -152,8 +146,6 @@ class KickbaseAPI:
 
         paths = [
             f"/v4/leagues/{league_id}/ranking",
-            f"/v4/leagues/{league_id}/standings",
-            f"/v4/leagues/{league_id}/table",
         ]
 
         return self.try_paths(
@@ -161,50 +153,26 @@ class KickbaseAPI:
             params=params if params else None,
         )
 
-    def get_league_sources(self, league_id):
-        """Lädt mögliche Quellen für Liga- und Managerinformationen."""
+    def get_squad_candidates(self, league_id, user_id):
+        """
+        Probiert alle bekannten Pfade für den Kader
+        eines Managers durch.
+
+        Der Kader enthält Marktwerte und meistens
+        auch den Kaufpreis.
+        """
         paths = [
-            f"/v4/leagues/{league_id}",
-            f"/v4/leagues/{league_id}/ranking",
-            f"/v4/leagues/{league_id}/info",
-            f"/v4/leagues/{league_id}/overview",
-            f"/v4/leagues/{league_id}/users",
+            f"/v4/leagues/{league_id}/managers/{user_id}/squad",
+            f"/v4/leagues/{league_id}/users/{user_id}/squad",
+            f"/v4/leagues/{league_id}/managers/{user_id}/players",
+            f"/v4/leagues/{league_id}/managers/{user_id}",
+            f"/v4/leagues/{league_id}/users/{user_id}/profile",
+            f"/v4/leagues/{league_id}/users/{user_id}",
+            f"/v4/leagues/{league_id}/squad",
+            f"/v4/leagues/{league_id}/lineup",
         ]
 
         return self.try_paths(paths)
-
-    def get_user_players(self, league_id, user_id, day_number=1):
-        """
-        Lädt den Team-Center eines Managers.
-
-        Enthält Kader und in der Regel auch Kaufpreise.
-        """
-        paths = [
-            f"/v4/leagues/{league_id}/users/{user_id}/teamcenter",
-        ]
-
-        results, errors = self.try_paths(
-            paths,
-            params={"dayNumber": day_number},
-        )
-
-        if results:
-            return results[0]["data"]
-
-        raise Exception(" | ".join(errors))
-
-    def get_player_detail(self, league_id, player_id):
-        """Lädt Details zu einem Spieler, inklusive Kaufpreis."""
-        paths = [
-            f"/v4/leagues/{league_id}/players/{player_id}",
-        ]
-
-        results, errors = self.try_paths(paths)
-
-        if results:
-            return results[0]["data"]
-
-        raise Exception(" | ".join(errors))
 
     def get_market(self, league_id):
         """Lädt den Transfermarkt."""
@@ -212,12 +180,7 @@ class KickbaseAPI:
             f"/v4/leagues/{league_id}/market",
         ]
 
-        results, errors = self.try_paths(paths)
-
-        if results:
-            return results[0]["data"]
-
-        raise Exception(" | ".join(errors))
+        return self.try_paths(paths)
 
     def get_me(self, league_id):
         """Lädt die eigenen Finanzdaten."""
