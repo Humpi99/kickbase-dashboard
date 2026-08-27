@@ -961,7 +961,9 @@ st.subheader(
     f"📊 Kennzahlen: {selected_manager_name}"
 )
 
-row1_col1, row1_col2, row1_col3 = st.columns(3)
+row1_col1, row1_col2, row1_col3, row1_col4 = (
+    st.columns(4)
+)
 
 row1_col1.metric(
     "Kaderwert",
@@ -979,6 +981,15 @@ row1_col3.metric(
     "Trading Spieler",
     format_currency(trading_value),
     help=f"{trading_count} Spieler auf der Bank",
+)
+
+row1_col4.metric(
+    "Spieler im Verein",
+    len(players),
+    help=(
+        f"{lineup_count} in der Startelf, "
+        f"{trading_count} auf der Bank"
+    ),
 )
 
 row2_col1, row2_col2, row2_col3, row2_col4 = (
