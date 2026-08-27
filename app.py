@@ -107,6 +107,7 @@ anzahl_trading = int(len(tabelle) - anzahl_start)
 gewinn_verein = int(tabelle["Gewinn gesamt"].sum())
 aenderung_24h = int(tabelle["Änderung 24 Stunden"].sum())
 
+# NEU: realisierter Gewinn aus prft
 gewinn_realisiert, quelle = api.get_realized_profit(liga_id, manager_id)
 if gewinn_realisiert is None:
     gewinn_realisiert = 0
@@ -166,6 +167,39 @@ stil = (anzeige.style
 st.dataframe(stil, use_container_width=True, height=600)
 
 # ----------------------------------------------------------------------
+# Verkaufte Spieler
+# ----------------------------------------------------------------------
+st.subheader("Verkaufte Spieler")
+
+transfer_quellen = api.get_transfers(liga_id, manager_id)
+verkaufte = []
+
+
+def sammle_verkaeufe(objekt):
+    if isinstance(objekt, dict):
+        hat_name = "pn" in objekt or "plnm" in objekt or "n" in objekt
+        hat_preis = "trp" in objekt or "p" in objekt or "prc" in objekt
+        if hat_name and hat_preis:
+            verkaufte.append({
+                "Spieler": objekt.get("pn", objekt.get("plnm", objekt.get("n", "-"))),
+                "Preis": objekt.get("trp", objekt.get("p", objekt.get("prc", 0))),
+            })
+        for wert in objekt.values():
+            sammle_verkaeufe(wert)
+    elif isinstance(objekt, list):
+        for eintrag in objekt:
+            sammle_verkaeufe(eintrag)
+
+
+for inhalt in transfer_quellen.values():
+    sammle_verkaeufe(inhalt)
+
+if verkaufte:
+    st.dataframe(pd.DataFrame(verkaufte), use_container_width=True)
+else:
+    st.info("Keine Verkaufsdaten gefunden. Der realisierte Gewinn kommt aus dem Feld prft.")
+
+# ----------------------------------------------------------------------
 # Alle Daten zu einem Spieler
 # ----------------------------------------------------------------------
 with st.expander("Alle Daten zu einem Spieler"):
@@ -176,6 +210,19 @@ with st.expander("Alle Daten zu einem Spieler"):
         if name == gewaehlt:
             st.json(spieler)
             break
+
+# ----------------------------------------------------------------------
+# Diagnose der Transferquellen
+# ----------------------------------------------------------------------
+with st.expander("Diagnose der Transferquellen"):
+    if not transfer_quellen:
+        st.info("Keine Transferquelle hat Daten geliefert.")
+    else:
+        for pfad, inhalt in transfer_quellen.items():
+            felder = list(inhalt.keys()) if isinstance(inhalt, dict) else ["(Liste)"]
+            st.write(pfad + "  ->  " + ", ".join(felder))
+            with st.expander("Rohdaten " + pfad):
+                st.json(inhalt)
 
 # ----------------------------------------------------------------------
 # Alle Daten zu diesem Manager
