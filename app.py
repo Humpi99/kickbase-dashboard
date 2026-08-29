@@ -39,14 +39,15 @@ REQUIRED_LINEUP_SIZE = 11
 # Basis für Bildadressen, die nur als Dateiname kommen.
 IMAGE_BASE_URL = "https://kickbase.b-cdn.net/"
 
-# Einheitliche Größe aller Vereinslogos.
+# Bildgrößen für Desktop
 TEAM_LOGO_SIZE = 17
-
-# Größe des runden Spielerbildes.
 PLAYER_PHOTO_SIZE = 24
-
-# Größe des runden S11-Symbols.
 S11_BADGE_SIZE = 15
+
+# Bildgrößen für die Handy-Ansicht
+TEAM_LOGO_SIZE_MOBILE = 14
+PLAYER_PHOTO_SIZE_MOBILE = 20
+S11_BADGE_SIZE_MOBILE = 13
 
 
 # ---------------------------------------------------------
@@ -291,37 +292,6 @@ def get_short_player_name(player):
 # S11-Wahrscheinlichkeit im Kickbase-Farbschema
 # ---------------------------------------------------------
 
-# Felder, die direkt eine Stufe von 1 bis 5 liefern können.
-S11_LEVEL_KEYS = [
-    "s11",
-    "s11p",
-    "stp",
-    "sl",
-    "plp",
-    "lpc",
-    "lineupChance",
-    "startChance",
-]
-
-# Felder, die einen Prozentwert von 0 bis 100 liefern können.
-S11_PERCENT_KEYS = [
-    "prob",
-    "probability",
-    "startProbability",
-    "startPropability",
-    "lineupProbability",
-    "s11prob",
-    "ep",
-    "chance",
-]
-
-# Statusfeld als letzte Rückfallebene.
-S11_STATUS_KEYS = [
-    "st",
-    "status",
-    "stxt",
-]
-
 # Fünf Stufen wie in der Kickbase-Legende:
 # Stufe: (Zeichen, Hintergrundfarbe, Klartext)
 S11_LEVELS = {
@@ -332,7 +302,6 @@ S11_LEVELS = {
     1: ("✕", "#546E7A", "Ausgeschlossen"),
 }
 
-# Erklärungstexte für die Legende unter der Tabelle
 S11_DESCRIPTIONS = {
     5: "nahezu sicherer Starter",
     4: "klare Erwartung auf die Startformation",
@@ -340,6 +309,37 @@ S11_DESCRIPTIONS = {
     2: "nicht erste Option, aber mögliche Alternative",
     1: "keine realistische Chance auf die Startformation",
 }
+
+# Mögliche Feldnamen für die S11-Einstufung.
+# Diese Felder stehen NICHT im Kaderdatensatz,
+# sondern nur in den Spieler-Detaildaten.
+S11_FIELD_CANDIDATES = [
+    "s11",
+    "s11p",
+    "s11prob",
+    "stp",
+    "sl",
+    "plp",
+    "lpc",
+    "lp",
+    "exs",
+    "lineupChance",
+    "startChance",
+    "startProbability",
+    "lineupProbability",
+    "probability",
+    "prob",
+    "chance",
+]
+
+# Endpunkte, auf denen die S11-Einstufung liegen könnte.
+S11_ENDPOINT_TEMPLATES = [
+    "/v4/leagues/{league_id}/players/{player_id}",
+    "/v4/leagues/{league_id}/players/{player_id}/performance",
+    "/v4/competitions/1/players/{player_id}",
+    "/v4/competitions/1/players/{player_id}/performance",
+    "/v4/players/{player_id}",
+]
 
 
 def percent_to_level(percent):
@@ -362,94 +362,178 @@ def percent_to_level(percent):
     return 1
 
 
-def status_to_level(status):
-    """Leitet eine Stufe aus dem Spielerstatus ab."""
-    number = to_number(status)
+def value_to_level(value):
+    """Wandelt einen Rohwert in eine Stufe von 1 bis 5 um."""
+    number = to_number(value)
 
-    if number is not None:
-        # 0 bedeutet in der Regel fit und einsatzbereit.
-        if int(number) == 0:
-            return 4
+    if number is None:
+        return None
 
-        # 2 steht meist für angeschlagen oder fraglich.
-        if int(number) == 2:
-            return 3
+    # Anteil von 0 bis 1
+    if 0 < number <= 1:
+        return percent_to_level(number * 100)
 
-        return 1
+    whole = int(number)
 
-    if isinstance(status, str):
-        text = status.lower()
+    # Direkte Stufe
+    if 1 <= whole <= 5:
+        return whole
 
-        if "fit" in text or "einsatzbereit" in text:
-            return 4
-
-        if "angeschlagen" in text or "fraglich" in text:
-            return 3
-
-        if (
-            "verletzt" in text
-            or "gesperrt" in text
-            or "raus" in text
-        ):
-            return 1
+    # Prozentwert
+    if 0 <= whole <= 100:
+        return percent_to_level(whole)
 
     return None
 
 
-def get_s11_level(player):
+def deep_find_s11(data, depth=0):
+    """
+    Sucht rekursiv nach einem möglichen S11-Feld.
+
+    Rückgabe: (Feldname, Rohwert) oder (None, None)
+    """
+    if depth > 6:
+        return None, None
+
+    if isinstance(data, dict):
+        for key in S11_FIELD_CANDIDATES:
+            if key in data and data[key] is not None:
+                if value_to_level(data[key]) is not None:
+                    return key, data[key]
+
+        for value in data.values():
+            found_key, found_value = deep_find_s11(
+                value,
+                depth + 1,
+            )
+
+            if found_key is not None:
+                return found_key, found_value
+
+    elif isinstance(data, list):
+        for item in data:
+            found_key, found_value = deep_find_s11(
+                item,
+                depth + 1,
+            )
+
+            if found_key is not None:
+                return found_key, found_value
+
+    return None, None
+
+
+def load_s11_for_player(api, league_id, player_id):
+    """
+    Fragt die Detail-Endpunkte eines Spielers ab.
+
+    Rückgabe: (Stufe oder None, Herkunft als Text)
+    """
+    if not player_id:
+        return None, "keine Spieler-ID"
+
+    for template in S11_ENDPOINT_TEMPLATES:
+        path = template.format(
+            league_id=league_id,
+            player_id=player_id,
+        )
+
+        try:
+            data = api.get(path)
+        except Exception:
+            continue
+
+        found_key, found_value = deep_find_s11(data)
+
+        if found_key is None:
+            continue
+
+        level = value_to_level(found_value)
+
+        if level is None:
+            continue
+
+        return (
+            level,
+            f"Feld {found_key} = {found_value} über {path}",
+        )
+
+    return None, "in keinem Detail-Endpunkt gefunden"
+
+
+def load_s11_map(api, league_id, players):
+    """
+    Lädt die S11-Einstufung für alle Spieler.
+
+    Rückgabe: {Spieler-ID: (Stufe, Herkunft)}
+    """
+    result = {}
+
+    progress = st.progress(
+        0.0,
+        text="S11-Wahrscheinlichkeiten werden geladen …",
+    )
+
+    total = max(1, len(players))
+
+    for index, player in enumerate(players):
+        player_id = get_player_id(player)
+
+        result[player_id] = load_s11_for_player(
+            api,
+            league_id,
+            player_id,
+        )
+
+        progress.progress(
+            (index + 1) / total,
+            text=(
+                "S11-Wahrscheinlichkeiten werden geladen … "
+                f"{index + 1} von {len(players)}"
+            ),
+        )
+
+    progress.empty()
+
+    return result
+
+
+def get_s11_level(player, s11_map=None):
     """
     Ermittelt die S11-Stufe von 1 bis 5.
 
-    Rückgabe: (Stufe oder None, Herkunft als Text)
+    Es wird ausschließlich ein echter Wert aus der
+    Kickbase-API verwendet. Ohne echten Wert bleibt
+    die Anzeige leer, damit keine falsche Einstufung
+    entsteht.
     """
     if not isinstance(player, dict):
         return None, "keine Spielerdaten"
 
-    # 1. Direkte Stufe von 1 bis 5
-    for key in S11_LEVEL_KEYS:
-        number = to_number(player.get(key))
+    # 1. Wert direkt im Kaderdatensatz
+    found_key, found_value = deep_find_s11(player)
 
-        if number is None:
-            continue
-
-        value = int(number)
-
-        if 1 <= value <= 5:
-            return value, f"Feld {key} (Stufe)"
-
-        if 0 <= value <= 100:
-            return (
-                percent_to_level(value),
-                f"Feld {key} (Prozent)",
-            )
-
-    # 2. Prozentwert
-    for key in S11_PERCENT_KEYS:
-        number = to_number(player.get(key))
-
-        if number is None:
-            continue
-
-        if 0 <= number <= 1:
-            number *= 100
-
-        if 0 <= number <= 100:
-            return (
-                percent_to_level(number),
-                f"Feld {key} (Prozent)",
-            )
-
-    # 3. Status als Rückfallebene
-    for key in S11_STATUS_KEYS:
-        if key not in player:
-            continue
-
-        level = status_to_level(player.get(key))
+    if found_key is not None:
+        level = value_to_level(found_value)
 
         if level is not None:
-            return level, f"aus Status {key} geschätzt"
+            return (
+                level,
+                f"Feld {found_key} = {found_value} im Kader",
+            )
 
-    return None, "nicht gefunden"
+    # 2. Wert aus den geladenen Detaildaten
+    if s11_map:
+        player_id = get_player_id(player)
+
+        if player_id in s11_map:
+            return s11_map[player_id]
+
+    return (
+        None,
+        "kein S11-Feld in den Kaderdaten "
+        "(Detaildaten nicht geladen)",
+    )
 
 
 def s11_badge_html(level, source="", size=S11_BADGE_SIZE):
@@ -488,21 +572,22 @@ def s11_badge_html(level, source="", size=S11_BADGE_SIZE):
     )
 
 
-def s11_icon_html(player):
+def s11_icon_html(player, s11_map=None,
+                  size=S11_BADGE_SIZE):
     """Baut das S11-Symbol für einen Spieler."""
-    level, source = get_s11_level(player)
+    level, source = get_s11_level(player, s11_map)
 
-    return s11_badge_html(level, source)
+    return s11_badge_html(level, source, size)
 
 
-def s11_sort_value(player):
+def s11_sort_value(player, s11_map=None):
     """Gibt eine sortierbare Zahl für die S11-Stufe zurück."""
-    level, _ = get_s11_level(player)
+    level, _ = get_s11_level(player, s11_map)
 
     return level if level is not None else 0
 
 
-def s11_legend_html():
+def s11_legend_html(size=S11_BADGE_SIZE):
     """Baut die Legende aller fünf Stufen."""
     parts = []
 
@@ -511,7 +596,7 @@ def s11_legend_html():
 
         parts.append(
             "<span class='s11-legend-entry'>"
-            f"{s11_badge_html(level)}"
+            f"{s11_badge_html(level, '', size)}"
             f"<span class='s11-legend-text'>{label}</span>"
             "</span>"
         )
@@ -1299,7 +1384,8 @@ def load_team_and_match_data(api, league_id):
     }
 
 
-def build_next_matches_html(team_id, next_matches, teams):
+def build_next_matches_html(team_id, next_matches, teams,
+                            logo_size=TEAM_LOGO_SIZE):
     """Baut die Anzeige der nächsten Spiele mit Logos."""
     entries = next_matches.get(str(team_id or ""), [])
 
@@ -1326,7 +1412,7 @@ def build_next_matches_html(team_id, next_matches, teams):
         parts.append(
             "<span class='match-entry'>"
             f"<span class='match-place'>{entry['place']}</span>"
-            f"{image_html(opponent_logo, opponent_name)}"
+            f"{image_html(opponent_logo, opponent_name, logo_size)}"
             f"<span class='match-date'>{entry['date']}</span>"
             "</span>"
         )
@@ -2302,12 +2388,25 @@ SQUAD_STYLE = (
     ".match-date{font-size:0.74rem;color:#777777;}"
     ".value-plus{color:#12a150;font-weight:600;}"
     ".value-minus{color:#e03131;font-weight:600;}"
+    # ----- Handy: zweizeilige Zellen statt Quetschen -----
+    ".squad-table.mobile{font-size:0.76rem;"
+    "table-layout:fixed;}"
+    ".squad-table.mobile th{font-size:0.58rem;"
+    "padding:0.35rem 0.3rem;white-space:normal;"
+    "word-break:break-word;line-height:1.2;}"
+    ".squad-table.mobile td{padding:0.4rem 0.3rem;"
+    "white-space:normal;word-break:break-word;"
+    "line-height:1.3;vertical-align:top;}"
+    ".squad-table.mobile .squad-player{flex-wrap:wrap;"
+    "gap:0.25rem;}"
+    ".squad-table.mobile .squad-player-name{"
+    "flex:1 1 100%;order:3;}"
+    ".squad-table.mobile .match-entry{display:flex;"
+    "margin-right:0;margin-bottom:0.15rem;}"
+    ".squad-table.mobile .s11-legend{gap:0.5rem;}"
     "@media (max-width:640px){"
-    ".squad-table{font-size:0.78rem;}"
-    ".squad-table th{font-size:0.62rem;padding:0.4rem;}"
-    ".squad-table td{padding:0.38rem 0.4rem;}"
-    ".s11-legend{gap:0.55rem;}"
-    ".s11-legend-text{font-size:0.68rem;}}"
+    ".s11-legend{gap:0.5rem;}"
+    ".s11-legend-text{font-size:0.66rem;}}"
     "</style>"
 )
 
@@ -2325,11 +2424,12 @@ def signed_cell_html(value):
     return f"<span class='{css_class}'>{text}</span>"
 
 
-def render_squad_table(frame, columns):
+def render_squad_table(frame, columns, compact=False):
     """
     Zeichnet die Kadertabelle als HTML.
 
-    Nur so können Bilder direkt neben Text stehen.
+    Auf dem Handy dürfen Zellen zweizeilig umbrechen,
+    damit alle Spalten erhalten bleiben.
     """
     header_cells = "".join(
         f"<th>{escape(column)}</th>" for column in columns
@@ -2339,7 +2439,7 @@ def render_squad_table(frame, columns):
 
     for _, row in frame.iterrows():
         row_class = (
-            " class='trading'"
+            "trading"
             if row.get("Status") == "Trading"
             else ""
         )
@@ -2379,13 +2479,19 @@ def render_squad_table(frame, columns):
                     f"<td>{escape(str(row[column]))}</td>"
                 )
 
-        body_rows.append(
-            f"<tr{row_class}>{''.join(cells)}</tr>"
+        row_attribute = (
+            f" class='{row_class}'" if row_class else ""
         )
+
+        body_rows.append(
+            f"<tr{row_attribute}>{''.join(cells)}</tr>"
+        )
+
+    table_class = "squad-table mobile" if compact else "squad-table"
 
     table_html = (
         "<div class='squad-wrapper'>"
-        "<table class='squad-table'>"
+        f"<table class='{table_class}'>"
         f"<thead><tr>{header_cells}</tr></thead>"
         f"<tbody>{''.join(body_rows)}</tbody>"
         "</table></div>"
@@ -2574,8 +2680,8 @@ st.markdown(
 
     @media (max-width: 640px) {
         .block-container {
-            padding-left: 0.75rem !important;
-            padding-right: 0.75rem !important;
+            padding-left: 0.5rem !important;
+            padding-right: 0.5rem !important;
             padding-top: 2.1rem !important;
         }
 
@@ -2781,7 +2887,25 @@ if "view" not in st.session_state:
 compact = st.sidebar.toggle(
     "📱 Handy-Ansicht",
     value=False,
-    help="Zeigt weniger Spalten und Zusatztexte.",
+    help=(
+        "Zeigt alle Spalten, erlaubt aber "
+        "zweizeilige Zellen."
+    ),
+)
+
+# Bildgrößen passend zur Ansicht
+team_logo_size = (
+    TEAM_LOGO_SIZE_MOBILE if compact else TEAM_LOGO_SIZE
+)
+
+player_photo_size = (
+    PLAYER_PHOTO_SIZE_MOBILE
+    if compact
+    else PLAYER_PHOTO_SIZE
+)
+
+s11_badge_size = (
+    S11_BADGE_SIZE_MOBILE if compact else S11_BADGE_SIZE
 )
 
 league_index = st.sidebar.selectbox(
@@ -2802,6 +2926,17 @@ show_realized = st.sidebar.checkbox(
     help=(
         "Lädt mögliche Verkäufe aus dem Feed. "
         "Das Feld prft wird unabhängig davon geprüft."
+    ),
+)
+
+load_s11 = st.sidebar.checkbox(
+    "S11 von Kickbase laden",
+    value=False,
+    help=(
+        "Der Kader-Endpunkt enthält keine "
+        "S11-Wahrscheinlichkeit. Mit dieser Option "
+        "wird pro Spieler ein Detail-Endpunkt "
+        "abgefragt. Das dauert länger."
     ),
 )
 
@@ -3493,6 +3628,28 @@ with st.spinner("Kader wird geladen …"):
         selected_manager_id,
     )
 
+
+# ---------------------------------------------------------
+# S11-Wahrscheinlichkeiten laden
+# ---------------------------------------------------------
+
+s11_map = {}
+
+if load_s11 and players:
+    s11_key = (
+        "s11_map_v1_"
+        f"{league_id}_{selected_manager_id}"
+    )
+
+    if s11_key not in st.session_state:
+        st.session_state[s11_key] = load_s11_map(
+            api,
+            league_id,
+            players,
+        )
+
+    s11_map = st.session_state[s11_key]
+
 realized_profit = None
 realized_trades = []
 feed_samples = []
@@ -3784,7 +3941,7 @@ elif players:
             photo_html = image_html(
                 player_photo,
                 player_name,
-                PLAYER_PHOTO_SIZE,
+                player_photo_size,
                 "player-photo",
             )
 
@@ -3795,7 +3952,7 @@ elif players:
             club_logo_html = image_html(
                 club_logo,
                 club_label,
-                TEAM_LOGO_SIZE,
+                team_logo_size,
             )
         elif club_label:
             club_logo_html = (
@@ -3804,14 +3961,18 @@ elif players:
             )
 
         # S11-Symbol im Kickbase-Farbschema
-        s11_html = s11_icon_html(player)
+        s11_html = s11_icon_html(
+            player,
+            s11_map,
+            s11_badge_size,
+        )
 
         player_html = (
             f"{photo_html}"
-            f"<span class='squad-player-name'>"
-            f"{escape(player_name)}</span>"
             f"{club_logo_html}"
             f"{s11_html}"
+            f"<span class='squad-player-name'>"
+            f"{escape(player_name)}</span>"
         )
 
         player_rows.append(
@@ -3820,7 +3981,10 @@ elif players:
                 "_spieler_html": player_html,
                 "Position": position_name,
                 "Status": status,
-                "S11-Stufe": s11_sort_value(player),
+                "S11-Stufe": s11_sort_value(
+                    player,
+                    s11_map,
+                ),
                 "Nächste Spiele": (
                     build_next_matches_text(
                         team_id,
@@ -3833,6 +3997,7 @@ elif players:
                         team_id,
                         next_matches,
                         teams,
+                        team_logo_size,
                     )
                 ),
                 "Einstandspreis": get_buy_price(
@@ -3850,26 +4015,17 @@ elif players:
 
     player_frame = pd.DataFrame(player_rows)
 
-    if compact:
-        player_columns = [
-            "Spieler",
-            "Status",
-            "Nächste Spiele",
-            "Marktwert",
-            "Gewinn gesamt",
-            "Trend 24 Stunden",
-        ]
-    else:
-        player_columns = [
-            "Spieler",
-            "Position",
-            "Status",
-            "Nächste Spiele",
-            "Einstandspreis",
-            "Marktwert",
-            "Gewinn gesamt",
-            "Trend 24 Stunden",
-        ]
+    # Auf dem Handy bleiben alle Spalten erhalten.
+    player_columns = [
+        "Spieler",
+        "Position",
+        "Status",
+        "Nächste Spiele",
+        "Einstandspreis",
+        "Marktwert",
+        "Gewinn gesamt",
+        "Trend 24 Stunden",
+    ]
 
     # Nach der S11-Stufe darf sortiert werden,
     # angezeigt wird sie aber nur als Symbol.
@@ -3883,16 +4039,28 @@ elif players:
         compact=compact,
     )
 
-    render_squad_table(player_frame, player_columns)
+    render_squad_table(
+        player_frame,
+        player_columns,
+        compact=compact,
+    )
 
     st.markdown(
-        s11_legend_html(),
+        s11_legend_html(s11_badge_size),
         unsafe_allow_html=True,
     )
 
+    if not load_s11:
+        st.info(
+            "Die S11-Symbole sind grau, weil die "
+            "Kaderdaten kein S11-Feld enthalten. "
+            "Aktiviere in der Seitenleiste "
+            "\"S11 von Kickbase laden\"."
+        )
+
     st.caption(
-        "Links das Spielerbild, daneben das Vereinslogo "
-        "und das S11-Symbol. "
+        "Links Spielerbild, Vereinslogo und "
+        "S11-Symbol, darunter der Name. "
         "H bedeutet Heimspiel, A bedeutet Auswärtsspiel."
     )
 
@@ -3974,7 +4142,8 @@ with st.expander("Alle Daten zu einem Spieler"):
         )
 
         inspect_level, inspect_source = get_s11_level(
-            inspect_player
+            inspect_player,
+            s11_map,
         )
 
         if inspect_level is None:
@@ -4004,6 +4173,92 @@ with st.expander("Alle Daten zu einem Spieler"):
 
         st.write("**Rohdaten:**")
         st.json(inspect_player)
+
+        st.markdown("---")
+        st.write("**Detail-Endpunkte dieses Spielers**")
+
+        st.caption(
+            "Damit finden wir den echten Feldnamen "
+            "der S11-Wahrscheinlichkeit."
+        )
+
+        if st.button("Detail-Endpunkte abfragen"):
+            player_id = get_player_id(inspect_player)
+            details = []
+
+            with st.spinner(
+                "Endpunkte werden getestet …"
+            ):
+                for template in S11_ENDPOINT_TEMPLATES:
+                    path = template.format(
+                        league_id=league_id,
+                        player_id=player_id,
+                    )
+
+                    try:
+                        data = api.get(path)
+                    except Exception as error:
+                        details.append(
+                            {
+                                "path": path,
+                                "error": str(error),
+                                "data": None,
+                            }
+                        )
+                        continue
+
+                    details.append(
+                        {
+                            "path": path,
+                            "error": None,
+                            "data": data,
+                        }
+                    )
+
+            st.session_state[
+                "s11_details"
+            ] = details
+
+        details = st.session_state.get(
+            "s11_details",
+            [],
+        )
+
+        for entry in details:
+            with st.expander(entry["path"]):
+                if entry["error"]:
+                    st.write(
+                        "Fehler: " + entry["error"]
+                    )
+                    continue
+
+                found_key, found_value = deep_find_s11(
+                    entry["data"]
+                )
+
+                if found_key:
+                    st.success(
+                        f"Mögliches S11-Feld: "
+                        f"{found_key} = {found_value}"
+                    )
+                else:
+                    st.write(
+                        "Kein bekanntes S11-Feld "
+                        "gefunden."
+                    )
+
+                fields = flatten_fields(entry["data"])
+
+                if fields:
+                    st.dataframe(
+                        pd.DataFrame(fields),
+                        use_container_width=True,
+                        hide_index=True,
+                        height=350,
+                    )
+
+                st.write("**Rohdaten:**")
+                st.json(entry["data"])
     else:
         st.info("Keine Spielerdaten vorhanden.")
 
@@ -4018,7 +4273,10 @@ if not compact:
             s11_rows = []
 
             for player in players:
-                level, source = get_s11_level(player)
+                level, source = get_s11_level(
+                    player,
+                    s11_map,
+                )
 
                 s11_rows.append(
                     {
@@ -4052,9 +4310,10 @@ if not compact:
 
             if missing:
                 st.warning(
-                    f"Bei {missing} Spielern wurde kein "
-                    "Feld erkannt. Bitte die Rohdaten "
-                    "eines dieser Spieler prüfen."
+                    f"Bei {missing} Spielern gibt es "
+                    "keinen echten Wert. Bitte oben "
+                    "\"Detail-Endpunkte abfragen\" "
+                    "nutzen und das Ergebnis melden."
                 )
         else:
             st.info("Keine Spielerdaten vorhanden.")
