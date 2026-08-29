@@ -1525,6 +1525,34 @@ def compute_own_bonus(api, league_id, real_balance):
 
 
 # ---------------------------------------------------------
+# Kaderanzeige der Liga-Tabelle
+# ---------------------------------------------------------
+
+def build_squad_label(player_count, lineup_count):
+    """
+    Baut den Text für die Spalte Kader.
+
+    Die Startelf-Anzahl steht nur in Klammern,
+    wenn sie nicht genau 11 Spieler beträgt.
+    """
+    total = to_number(player_count)
+    lineup = to_number(lineup_count)
+
+    if total is None:
+        return "—"
+
+    total_text = str(int(total))
+
+    if lineup is None:
+        return total_text
+
+    if int(lineup) == REQUIRED_LINEUP_SIZE:
+        return total_text
+
+    return f"{total_text} ({int(lineup)})"
+
+
+# ---------------------------------------------------------
 # Tabellenformatierung
 # ---------------------------------------------------------
 
@@ -1614,7 +1642,7 @@ def style_league_table(frame, lineup_counts=None):
     """
     Formatiert und färbt die Liga-Tabelle.
 
-    Die Spalte Spieler wird rot, wenn die Startelf
+    Die Spalte Kader wird rot, wenn die Startelf
     nicht genau 11 Spieler enthält.
     """
     signed_columns = [
@@ -1648,10 +1676,10 @@ def style_league_table(frame, lineup_counts=None):
 
     if (
         lineup_counts is not None
-        and "Spieler" in frame.columns
+        and "Kader" in frame.columns
     ):
 
-        def color_lineup(column):
+        def color_squad(column):
             """Färbt unvollständige Startelf-Angaben rot."""
             styles = []
 
@@ -1672,8 +1700,8 @@ def style_league_table(frame, lineup_counts=None):
             return styles
 
         styled = styled.apply(
-            color_lineup,
-            subset=["Spieler"],
+            color_squad,
+            subset=["Kader"],
         )
 
     formats = {}
@@ -2178,7 +2206,7 @@ if st.sidebar.button(
     st.session_state.pop(bonus_key, None)
     st.session_state.pop(budget_key, None)
     st.session_state.pop(
-        f"league_rows_v6_{league_id}",
+        f"league_rows_v7_{league_id}",
         None,
     )
 
@@ -2460,11 +2488,11 @@ if view == "Liga":
     if not compact:
         st.caption(
             "Ein Klick auf eine Zeile öffnet die "
-            "Detailansicht. Eine rote Spielerzahl "
-            "bedeutet: keine vollständige Startelf."
+            "Detailansicht. Eine rote Kaderzahl bedeutet: "
+            "keine vollständige Startelf."
         )
 
-    cache_key = f"league_rows_v6_{league_id}"
+    cache_key = f"league_rows_v7_{league_id}"
 
     if st.button("Daten neu laden"):
         st.session_state.pop(cache_key, None)
@@ -2509,6 +2537,9 @@ if view == "Liga":
                     "Startelf-Anzahl": (
                         manager_stats["lineup_count"]
                     ),
+                    "Kader": (
+                        manager_stats["player_count"]
+                    ),
                     "Start 11": (
                         manager_stats["lineup_value"]
                     ),
@@ -2517,12 +2548,6 @@ if view == "Liga":
                     ),
                     "Kaderwert": (
                         manager_stats["squad_value"]
-                    ),
-                    "Spieler": (
-                        manager_stats["lineup_count"]
-                    ),
-                    "Kader": (
-                        manager_stats["player_count"]
                     ),
                     "Gewinn gesamt": (
                         manager_stats["profit_in_club"]
@@ -2593,7 +2618,7 @@ if view == "Liga":
     if compact:
         visible_columns = [
             "Manager",
-            "Spieler",
+            "Kader",
             "Kaderwert",
             "Gewinn gesamt",
             "Trend gesamt",
@@ -2602,7 +2627,6 @@ if view == "Liga":
     else:
         visible_columns = [
             "Manager",
-            "Spieler",
             "Kader",
             "Start 11",
             "Trading",
@@ -2624,6 +2648,8 @@ if view == "Liga":
         ]
     ].copy()
 
+    # Die Spalte Kader ist hier noch eine Zahl.
+    # Dadurch wird numerisch und nicht alphabetisch sortiert.
     sortable_frame = sort_controls(
         sortable_frame,
         visible_columns,
@@ -2643,6 +2669,15 @@ if view == "Liga":
     display_frame = sortable_frame.drop(
         columns=["Manager-ID", "Startelf-Anzahl"]
     )
+
+    # Erst nach dem Sortieren wird der Anzeigetext gebaut.
+    display_frame["Kader"] = [
+        build_squad_label(total, lineup)
+        for total, lineup in zip(
+            display_frame["Kader"],
+            lineup_counts,
+        )
+    ]
 
     dataframe_arguments = {
         "use_container_width": True,
@@ -2681,8 +2716,10 @@ if view == "Liga":
         )
 
     st.caption(
-        "Spalte Spieler: Anzahl in der Startelf. "
-        "Rot bedeutet weniger oder mehr als 11 Spieler."
+        "Spalte Kader: Gesamtzahl der Spieler. "
+        "Die Zahl in Klammern und die rote Farbe "
+        "erscheinen nur, wenn die Startelf nicht "
+        "11 Spieler hat."
     )
 
     if own_budget is not None:
@@ -3032,7 +3069,7 @@ else:
         f"Kader von {selected_manager_name}"
     )
 
-if stats["lineup_count"] != REQUIRED_LINEUP_SIZE:
+if players and stats["lineup_count"] != REQUIRED_LINEUP_SIZE:
     st.warning(
         f"Die Startelf enthält "
         f"{stats['lineup_count']} Spieler "
