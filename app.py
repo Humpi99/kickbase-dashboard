@@ -45,6 +45,9 @@ TEAM_LOGO_SIZE = 17
 # Größe des runden Spielerbildes.
 PLAYER_PHOTO_SIZE = 24
 
+# Größe des runden S11-Symbols.
+S11_BADGE_SIZE = 15
+
 
 # ---------------------------------------------------------
 # Basis-Hilfsfunktionen
@@ -282,6 +285,242 @@ def get_short_player_name(player):
         return str(last_name)
 
     return get_player_name(player)
+
+
+# ---------------------------------------------------------
+# S11-Wahrscheinlichkeit im Kickbase-Farbschema
+# ---------------------------------------------------------
+
+# Felder, die direkt eine Stufe von 1 bis 5 liefern können.
+S11_LEVEL_KEYS = [
+    "s11",
+    "s11p",
+    "stp",
+    "sl",
+    "plp",
+    "lpc",
+    "lineupChance",
+    "startChance",
+]
+
+# Felder, die einen Prozentwert von 0 bis 100 liefern können.
+S11_PERCENT_KEYS = [
+    "prob",
+    "probability",
+    "startProbability",
+    "startPropability",
+    "lineupProbability",
+    "s11prob",
+    "ep",
+    "chance",
+]
+
+# Statusfeld als letzte Rückfallebene.
+S11_STATUS_KEYS = [
+    "st",
+    "status",
+    "stxt",
+]
+
+# Fünf Stufen wie in der Kickbase-Legende:
+# Stufe: (Zeichen, Hintergrundfarbe, Klartext)
+S11_LEVELS = {
+    5: ("+", "#2196F3", "Sicher"),
+    4: ("✓", "#4CAF50", "Erwartet"),
+    3: ("?", "#FF9800", "Unsicher"),
+    2: ("!", "#F44336", "Unwahrscheinlich"),
+    1: ("✕", "#546E7A", "Ausgeschlossen"),
+}
+
+# Erklärungstexte für die Legende unter der Tabelle
+S11_DESCRIPTIONS = {
+    5: "nahezu sicherer Starter",
+    4: "klare Erwartung auf die Startformation",
+    3: "realistische Chance, aber keine sichere Wahl",
+    2: "nicht erste Option, aber mögliche Alternative",
+    1: "keine realistische Chance auf die Startformation",
+}
+
+
+def percent_to_level(percent):
+    """Rechnet einen Prozentwert in eine Stufe von 1 bis 5 um."""
+    if percent is None:
+        return None
+
+    if percent >= 85:
+        return 5
+
+    if percent >= 60:
+        return 4
+
+    if percent >= 35:
+        return 3
+
+    if percent >= 10:
+        return 2
+
+    return 1
+
+
+def status_to_level(status):
+    """Leitet eine Stufe aus dem Spielerstatus ab."""
+    number = to_number(status)
+
+    if number is not None:
+        # 0 bedeutet in der Regel fit und einsatzbereit.
+        if int(number) == 0:
+            return 4
+
+        # 2 steht meist für angeschlagen oder fraglich.
+        if int(number) == 2:
+            return 3
+
+        return 1
+
+    if isinstance(status, str):
+        text = status.lower()
+
+        if "fit" in text or "einsatzbereit" in text:
+            return 4
+
+        if "angeschlagen" in text or "fraglich" in text:
+            return 3
+
+        if (
+            "verletzt" in text
+            or "gesperrt" in text
+            or "raus" in text
+        ):
+            return 1
+
+    return None
+
+
+def get_s11_level(player):
+    """
+    Ermittelt die S11-Stufe von 1 bis 5.
+
+    Rückgabe: (Stufe oder None, Herkunft als Text)
+    """
+    if not isinstance(player, dict):
+        return None, "keine Spielerdaten"
+
+    # 1. Direkte Stufe von 1 bis 5
+    for key in S11_LEVEL_KEYS:
+        number = to_number(player.get(key))
+
+        if number is None:
+            continue
+
+        value = int(number)
+
+        if 1 <= value <= 5:
+            return value, f"Feld {key} (Stufe)"
+
+        if 0 <= value <= 100:
+            return (
+                percent_to_level(value),
+                f"Feld {key} (Prozent)",
+            )
+
+    # 2. Prozentwert
+    for key in S11_PERCENT_KEYS:
+        number = to_number(player.get(key))
+
+        if number is None:
+            continue
+
+        if 0 <= number <= 1:
+            number *= 100
+
+        if 0 <= number <= 100:
+            return (
+                percent_to_level(number),
+                f"Feld {key} (Prozent)",
+            )
+
+    # 3. Status als Rückfallebene
+    for key in S11_STATUS_KEYS:
+        if key not in player:
+            continue
+
+        level = status_to_level(player.get(key))
+
+        if level is not None:
+            return level, f"aus Status {key} geschätzt"
+
+    return None, "nicht gefunden"
+
+
+def s11_badge_html(level, source="", size=S11_BADGE_SIZE):
+    """
+    Baut das runde farbige S11-Symbol.
+
+    Ohne Stufe erscheint ein hellgrauer Kreis.
+    """
+    if level is None:
+        title = "S11-Wahrscheinlichkeit unbekannt"
+
+        if source:
+            title = f"{title} ({source})"
+
+        return (
+            "<span class='s11-badge' "
+            f"style='background:#cfd8dc;"
+            f"width:{size}px;height:{size}px;"
+            f"font-size:{max(8, size - 5)}px;' "
+            f"title='{escape(title)}'>–</span>"
+        )
+
+    symbol, color, label = S11_LEVELS[level]
+
+    title = f"{label}: {S11_DESCRIPTIONS[level]}"
+
+    if source:
+        title = f"{title} (Quelle: {source})"
+
+    return (
+        "<span class='s11-badge' "
+        f"style='background:{color};"
+        f"width:{size}px;height:{size}px;"
+        f"font-size:{max(8, size - 5)}px;' "
+        f"title='{escape(title)}'>{symbol}</span>"
+    )
+
+
+def s11_icon_html(player):
+    """Baut das S11-Symbol für einen Spieler."""
+    level, source = get_s11_level(player)
+
+    return s11_badge_html(level, source)
+
+
+def s11_sort_value(player):
+    """Gibt eine sortierbare Zahl für die S11-Stufe zurück."""
+    level, _ = get_s11_level(player)
+
+    return level if level is not None else 0
+
+
+def s11_legend_html():
+    """Baut die Legende aller fünf Stufen."""
+    parts = []
+
+    for level in [5, 4, 3, 2, 1]:
+        _, _, label = S11_LEVELS[level]
+
+        parts.append(
+            "<span class='s11-legend-entry'>"
+            f"{s11_badge_html(level)}"
+            f"<span class='s11-legend-text'>{label}</span>"
+            "</span>"
+        )
+
+    return (
+        "<div class='s11-legend'>"
+        + "".join(parts)
+        + "</div>"
+    )
 
 
 # ---------------------------------------------------------
@@ -2044,6 +2283,18 @@ SQUAD_STYLE = (
     ".squad-player-name{font-weight:600;color:#1c1c1c;}"
     ".squad-table tr.trading .squad-player-name{"
     "color:#9a9a9a;}"
+    ".s11-badge{display:inline-flex;align-items:center;"
+    "justify-content:center;border-radius:50%;"
+    "color:#ffffff;font-weight:700;line-height:1;"
+    "flex:0 0 auto;cursor:help;"
+    "box-shadow:0 1px 2px rgba(0,0,0,0.25);"
+    "font-family:Arial,Helvetica,sans-serif;}"
+    ".s11-legend{display:flex;flex-wrap:wrap;"
+    "align-items:center;gap:0.85rem;"
+    "margin:0.2rem 0 0.5rem 0;}"
+    ".s11-legend-entry{display:inline-flex;"
+    "align-items:center;gap:0.3rem;}"
+    ".s11-legend-text{font-size:0.74rem;color:#777777;}"
     ".match-entry{display:inline-flex;align-items:center;"
     "gap:0.2rem;margin-right:0.6rem;}"
     ".match-place{font-weight:700;font-size:0.7rem;"
@@ -2054,7 +2305,9 @@ SQUAD_STYLE = (
     "@media (max-width:640px){"
     ".squad-table{font-size:0.78rem;}"
     ".squad-table th{font-size:0.62rem;padding:0.4rem;}"
-    ".squad-table td{padding:0.38rem 0.4rem;}}"
+    ".squad-table td{padding:0.38rem 0.4rem;}"
+    ".s11-legend{gap:0.55rem;}"
+    ".s11-legend-text{font-size:0.68rem;}}"
     "</style>"
 )
 
@@ -3550,11 +3803,15 @@ elif players:
                 f"{escape(club_label)}</span>"
             )
 
+        # S11-Symbol im Kickbase-Farbschema
+        s11_html = s11_icon_html(player)
+
         player_html = (
             f"{photo_html}"
             f"<span class='squad-player-name'>"
             f"{escape(player_name)}</span>"
             f"{club_logo_html}"
+            f"{s11_html}"
         )
 
         player_rows.append(
@@ -3563,6 +3820,7 @@ elif players:
                 "_spieler_html": player_html,
                 "Position": position_name,
                 "Status": status,
+                "S11-Stufe": s11_sort_value(player),
                 "Nächste Spiele": (
                     build_next_matches_text(
                         team_id,
@@ -3613,9 +3871,13 @@ elif players:
             "Trend 24 Stunden",
         ]
 
+    # Nach der S11-Stufe darf sortiert werden,
+    # angezeigt wird sie aber nur als Symbol.
+    sortable_columns = player_columns + ["S11-Stufe"]
+
     player_frame = sort_controls(
         player_frame,
-        player_columns,
+        sortable_columns,
         key="kader",
         default_column="Gewinn gesamt",
         compact=compact,
@@ -3623,10 +3885,15 @@ elif players:
 
     render_squad_table(player_frame, player_columns)
 
+    st.markdown(
+        s11_legend_html(),
+        unsafe_allow_html=True,
+    )
+
     st.caption(
-        "Links das Spielerbild, rechts daneben das "
-        "Vereinslogo. H bedeutet Heimspiel, "
-        "A bedeutet Auswärtsspiel."
+        "Links das Spielerbild, daneben das Vereinslogo "
+        "und das S11-Symbol. "
+        "H bedeutet Heimspiel, A bedeutet Auswärtsspiel."
     )
 
 else:
@@ -3706,6 +3973,23 @@ with st.expander("Alle Daten zu einem Spieler"):
             )
         )
 
+        inspect_level, inspect_source = get_s11_level(
+            inspect_player
+        )
+
+        if inspect_level is None:
+            st.write(
+                "S11-Einstufung: nicht gefunden "
+                f"({inspect_source})"
+            )
+        else:
+            st.write(
+                "S11-Einstufung: "
+                f"{S11_LEVELS[inspect_level][2]} "
+                f"(Stufe {inspect_level} von 5, "
+                f"Quelle: {inspect_source})"
+            )
+
         squad_fields = flatten_fields(
             inspect_player
         )
@@ -3729,6 +4013,52 @@ with st.expander("Alle Daten zu einem Spieler"):
 # ---------------------------------------------------------
 
 if not compact:
+    with st.expander("Diagnose S11-Wahrscheinlichkeit"):
+        if players:
+            s11_rows = []
+
+            for player in players:
+                level, source = get_s11_level(player)
+
+                s11_rows.append(
+                    {
+                        "Spieler": get_player_name(player),
+                        "Einstufung": (
+                            S11_LEVELS[level][2]
+                            if level is not None
+                            else "unbekannt"
+                        ),
+                        "Stufe": (
+                            level
+                            if level is not None
+                            else "—"
+                        ),
+                        "Quelle": source,
+                    }
+                )
+
+            st.dataframe(
+                pd.DataFrame(s11_rows),
+                use_container_width=True,
+                hide_index=True,
+                height=table_height(len(s11_rows)),
+            )
+
+            missing = sum(
+                1
+                for row in s11_rows
+                if row["Stufe"] == "—"
+            )
+
+            if missing:
+                st.warning(
+                    f"Bei {missing} Spielern wurde kein "
+                    "Feld erkannt. Bitte die Rohdaten "
+                    "eines dieser Spieler prüfen."
+                )
+        else:
+            st.info("Keine Spielerdaten vorhanden.")
+
     with st.expander("Diagnose Vereine und Spielplan"):
         st.write(
             f"Erkannte Vereine: {len(teams)}"
