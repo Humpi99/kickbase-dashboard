@@ -36,7 +36,7 @@ SESSION_COOKIE_DAYS = 30
 # Eine vollständige Startelf besteht aus 11 Spielern.
 REQUIRED_LINEUP_SIZE = 11
 
-# Basis für Logo-Adressen, die nur als Dateiname kommen.
+# Basis für Bildadressen, die nur als Dateiname kommen.
 IMAGE_BASE_URL = "https://kickbase.b-cdn.net/"
 
 
@@ -54,6 +54,20 @@ def first_value(data, keys, default=None):
             return data[key]
 
     return default
+
+
+def first_text(data, keys):
+    """Gibt den ersten nicht leeren Text zurück."""
+    if not isinstance(data, dict):
+        return ""
+
+    for key in keys:
+        value = data.get(key)
+
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+
+    return ""
 
 
 def to_number(value):
@@ -265,7 +279,7 @@ def get_short_player_name(player):
 
 
 # ---------------------------------------------------------
-# Vereine, Namen und Logos
+# Bilder: Spieler und Vereine getrennt
 # ---------------------------------------------------------
 
 TEAM_ID_KEYS = [
@@ -293,18 +307,30 @@ TEAM_SHORT_KEYS = [
     "sn",
 ]
 
-# Mögliche Felder mit einer Bildadresse des Vereins
+# Nur Vereinsbilder. Das Feld pim ist ein Spielerbild
+# und darf hier auf keinen Fall stehen.
 TEAM_IMAGE_KEYS = [
     "tim",
     "teamImage",
+    "teamLogo",
+    "clubImage",
+    "clubLogo",
     "logo",
     "logoUrl",
+    "crest",
+    "badge",
+    "tiy",
+]
+
+# Nur Spielerbilder
+PLAYER_IMAGE_KEYS = [
+    "pim",
+    "playerImage",
+    "plim",
+    "profileImage",
     "image",
     "imageUrl",
     "img",
-    "pim",
-    "tiy",
-    "crest",
 ]
 
 
@@ -314,7 +340,7 @@ def build_image_url(value):
 
     Kickbase liefert manchmal nur einen Dateinamen.
     """
-    if not value or not isinstance(value, str):
+    if not isinstance(value, str):
         return ""
 
     cleaned = value.strip()
@@ -360,6 +386,20 @@ def looks_like_team(item):
     if not isinstance(item, dict):
         return False
 
+    # Spielerobjekte werden bewusst ausgeschlossen
+    player_markers = [
+        "mv",
+        "marketValue",
+        "mvgl",
+        "tfhmvt",
+        "firstName",
+        "pfn",
+        "pln",
+    ]
+
+    if any(marker in item for marker in player_markers):
+        return False
+
     team_id = first_value(
         item,
         ["id", "i", "tid", "teamId"],
@@ -371,23 +411,22 @@ def looks_like_team(item):
     if isinstance(team_id, (dict, list, bool)):
         return False
 
-    has_name = any(
-        isinstance(item.get(key), str) and item.get(key)
-        for key in [
-            "name",
-            "n",
-            "shortName",
-            "sn",
-            "tabb",
-            "teamName",
-            "tn",
-        ]
+    has_name = bool(
+        first_text(
+            item,
+            [
+                "name",
+                "n",
+                "shortName",
+                "sn",
+                "tabb",
+                "teamName",
+                "tn",
+            ],
+        )
     )
 
-    has_image = any(
-        isinstance(item.get(key), str) and item.get(key)
-        for key in TEAM_IMAGE_KEYS
-    )
+    has_image = bool(first_text(item, TEAM_IMAGE_KEYS))
 
     return has_name or has_image
 
@@ -396,7 +435,7 @@ def extract_team_info(sources):
     """
     Baut eine Zuordnung von Vereins-ID zu Name und Logo.
 
-    Rückgabe: {"5": {"name": "FCB", "logo": "https://..."}}
+    Ergebnis: {"2": {"name": "FCB", "logo": "https://..."}}
     """
     teams = {}
 
@@ -412,21 +451,6 @@ def extract_team_info(sources):
                 )
             )
 
-            short_name = first_value(
-                item,
-                ["tabb", "shortName", "sn", "symbol"],
-            )
-
-            long_name = first_value(
-                item,
-                ["name", "n", "teamName", "tn"],
-            )
-
-            image_value = first_value(
-                item,
-                TEAM_IMAGE_KEYS,
-            )
-
             entry = teams.setdefault(
                 team_id,
                 {
@@ -436,20 +460,69 @@ def extract_team_info(sources):
                 },
             )
 
-            if not entry["name"] and isinstance(
-                short_name,
-                str,
-            ):
-                entry["name"] = short_name.strip()
+            if not entry["name"]:
+                entry["name"] = first_text(
+                    item,
+                    [
+                        "tabb",
+                        "shortName",
+                        "sn",
+                        "symbol",
+                    ],
+                )
 
-            if not entry["long_name"] and isinstance(
-                long_name,
-                str,
-            ):
-                entry["long_name"] = long_name.strip()
+            if not entry["long_name"]:
+                entry["long_name"] = first_text(
+                    item,
+                    ["name", "n", "teamName", "tn"],
+                )
 
             if not entry["logo"]:
-                entry["logo"] = build_image_url(image_value)
+                entry["logo"] = build_image_url(
+                    first_text(item, TEAM_IMAGE_KEYS)
+                )
+
+    # Vereinslogos aus allen Quellen nachtragen
+    for source in sources:
+        for item in collect_dictionaries(source.get("data")):
+            team_id = first_value(item, TEAM_ID_KEYS)
+
+            if team_id is None:
+                continue
+
+            if isinstance(team_id, (dict, list, bool)):
+                continue
+
+            logo = build_image_url(
+                first_text(item, TEAM_IMAGE_KEYS)
+            )
+
+            if not logo:
+                continue
+
+            entry = teams.setdefault(
+                str(team_id),
+                {
+                    "name": "",
+                    "long_name": "",
+                    "logo": "",
+                },
+            )
+
+            if not entry["logo"]:
+                entry["logo"] = logo
+
+            if not entry["name"]:
+                entry["name"] = first_text(
+                    item,
+                    TEAM_SHORT_KEYS,
+                )
+
+            if not entry["long_name"]:
+                entry["long_name"] = first_text(
+                    item,
+                    TEAM_NAME_KEYS,
+                )
 
     # Fehlende Kurznamen mit dem langen Namen füllen
     for entry in teams.values():
@@ -463,7 +536,7 @@ def get_team_id(player):
     """Ermittelt die Vereins-ID eines Spielers."""
     value = first_value(player, TEAM_ID_KEYS)
 
-    if value is None or isinstance(value, (dict, list)):
+    if value is None or isinstance(value, (dict, list, bool)):
         return None
 
     return str(value)
@@ -497,15 +570,15 @@ def get_team_logo(team_id, teams):
 
 def get_club_label(player, teams=None):
     """Ermittelt eine kurze Vereinsbezeichnung."""
-    short_name = first_value(player, TEAM_SHORT_KEYS)
+    short_name = first_text(player, TEAM_SHORT_KEYS)
 
-    if isinstance(short_name, str) and short_name.strip():
-        return short_name.strip()
+    if short_name:
+        return short_name
 
     club_name = first_value(player, TEAM_NAME_KEYS)
 
     if isinstance(club_name, dict):
-        club_name = first_value(club_name, ["name", "n"])
+        club_name = first_text(club_name, ["name", "n"])
 
     if isinstance(club_name, str) and club_name.strip():
         return club_name.strip()
@@ -516,12 +589,14 @@ def get_club_label(player, teams=None):
     return ""
 
 
-def get_player_logo(player, teams=None):
-    """Ermittelt das Logo des Vereins eines Spielers."""
-    direct_image = first_value(player, TEAM_IMAGE_KEYS)
+def get_player_club_logo(player, teams=None):
+    """Ermittelt das Vereinslogo eines Spielers."""
+    direct_logo = build_image_url(
+        first_text(player, TEAM_IMAGE_KEYS)
+    )
 
-    if isinstance(direct_image, str) and direct_image.strip():
-        return build_image_url(direct_image)
+    if direct_logo:
+        return direct_logo
 
     if teams:
         return get_team_logo(get_team_id(player), teams)
@@ -529,9 +604,16 @@ def get_player_logo(player, teams=None):
     return ""
 
 
-def logo_html(url, label, size=18):
+def get_player_photo(player):
+    """Ermittelt das Bild des Spielers selbst."""
+    return build_image_url(
+        first_text(player, PLAYER_IMAGE_KEYS)
+    )
+
+
+def image_html(url, label, size=18, css_class="team-logo"):
     """
-    Baut ein kleines Logo-Bild.
+    Baut ein kleines Bild.
 
     Ohne Adresse wird nur der Text zurückgegeben.
     """
@@ -542,7 +624,7 @@ def logo_html(url, label, size=18):
 
     return (
         f"<img src='{escape(url)}' alt='{safe_label}' "
-        f"title='{safe_label}' class='team-logo' "
+        f"title='{safe_label}' class='{css_class}' "
         f"style='height:{size}px;width:{size}px;' />"
     )
 
@@ -781,6 +863,32 @@ AWAY_TEAM_KEYS = [
     "at",
 ]
 
+HOME_IMAGE_KEYS = [
+    "t1im",
+    "t1i",
+    "homeTeamImage",
+    "htim",
+]
+
+AWAY_IMAGE_KEYS = [
+    "t2im",
+    "t2i",
+    "awayTeamImage",
+    "atim",
+]
+
+HOME_NAME_KEYS = [
+    "t1n",
+    "homeTeamName",
+    "htn",
+]
+
+AWAY_NAME_KEYS = [
+    "t2n",
+    "awayTeamName",
+    "atn",
+]
+
 MATCH_DATE_KEYS = [
     "dt",
     "date",
@@ -791,7 +899,12 @@ MATCH_DATE_KEYS = [
 
 
 def extract_matches(match_sources):
-    """Sammelt kommende Spiele beider Mannschaften."""
+    """
+    Sammelt kommende Spiele beider Mannschaften.
+
+    Logos und Namen werden direkt mitgenommen,
+    falls der Spielplan sie schon enthält.
+    """
     matches = []
     seen = set()
     now = datetime.now(timezone.utc)
@@ -836,6 +949,20 @@ def extract_matches(match_sources):
                 {
                     "home_id": str(home_id),
                     "away_id": str(away_id),
+                    "home_logo": build_image_url(
+                        first_text(item, HOME_IMAGE_KEYS)
+                    ),
+                    "away_logo": build_image_url(
+                        first_text(item, AWAY_IMAGE_KEYS)
+                    ),
+                    "home_name": first_text(
+                        item,
+                        HOME_NAME_KEYS,
+                    ),
+                    "away_name": first_text(
+                        item,
+                        AWAY_NAME_KEYS,
+                    ),
                     "date": match_date,
                 }
             )
@@ -847,8 +974,8 @@ def build_next_matches(matches, count=2):
     """
     Baut pro Verein eine Liste der nächsten Gegner.
 
-    Jeder Eintrag enthält Gegner-ID, Heim oder Auswärts
-    und das Datum.
+    Jeder Eintrag enthält Gegner-ID, Logo, Name,
+    Heim oder Auswärts und das Datum.
     """
     by_team = {}
 
@@ -863,6 +990,8 @@ def build_next_matches(matches, count=2):
         by_team.setdefault(home_id, []).append(
             {
                 "opponent_id": away_id,
+                "opponent_logo": match["away_logo"],
+                "opponent_name": match["away_name"],
                 "place": "H",
                 "date": date_text,
             }
@@ -871,6 +1000,8 @@ def build_next_matches(matches, count=2):
         by_team.setdefault(away_id, []).append(
             {
                 "opponent_id": home_id,
+                "opponent_logo": match["home_logo"],
+                "opponent_name": match["home_name"],
                 "place": "A",
                 "date": date_text,
             }
@@ -906,7 +1037,7 @@ def load_team_and_match_data(api, league_id):
         match_errors = [str(error)]
 
     teams = extract_team_info(
-        competition_sources + team_sources
+        competition_sources + team_sources + match_sources
     )
 
     matches = extract_matches(match_sources)
@@ -933,8 +1064,15 @@ def build_next_matches_html(team_id, next_matches, teams):
 
     for entry in entries:
         opponent_id = entry["opponent_id"]
-        opponent_name = get_team_name(opponent_id, teams)
-        opponent_logo = get_team_logo(opponent_id, teams)
+
+        # Logo zuerst aus dem Spielplan, dann aus den Vereinen
+        opponent_logo = entry.get(
+            "opponent_logo"
+        ) or get_team_logo(opponent_id, teams)
+
+        opponent_name = entry.get(
+            "opponent_name"
+        ) or get_team_name(opponent_id, teams)
 
         if not opponent_name:
             opponent_name = "Gegner"
@@ -942,7 +1080,7 @@ def build_next_matches_html(team_id, next_matches, teams):
         parts.append(
             "<span class='match-entry'>"
             f"<span class='match-place'>{entry['place']}</span>"
-            f"{logo_html(opponent_logo, opponent_name, 16)}"
+            f"{image_html(opponent_logo, opponent_name, 17)}"
             f"<span class='match-date'>{entry['date']}</span>"
             "</span>"
         )
@@ -961,7 +1099,8 @@ def build_next_matches_text(team_id, next_matches, teams):
 
     for entry in entries:
         opponent_name = (
-            get_team_name(entry["opponent_id"], teams)
+            entry.get("opponent_name")
+            or get_team_name(entry["opponent_id"], teams)
             or entry["opponent_id"]
         )
 
@@ -1871,7 +2010,7 @@ def style_trades_table(frame):
 
 
 # ---------------------------------------------------------
-# Kadertabelle als HTML mit Logos
+# Kadertabelle als HTML mit Bildern
 # ---------------------------------------------------------
 
 SQUAD_STYLE = (
@@ -1891,16 +2030,17 @@ SQUAD_STYLE = (
     ".squad-table tr.trading td{color:#9a9a9a;"
     "background-color:#fafafa;}"
     ".squad-player{display:flex;align-items:center;"
-    "gap:0.45rem;}"
-    ".team-logo{object-fit:contain;border-radius:3px;"
-    "flex:0 0 auto;}"
+    "gap:0.4rem;}"
+    ".player-photo{object-fit:cover;border-radius:50%;"
+    "background:#f0f0f0;flex:0 0 auto;}"
+    ".team-logo{object-fit:contain;flex:0 0 auto;}"
     ".squad-player-name{font-weight:600;color:#1c1c1c;}"
     ".squad-table tr.trading .squad-player-name{"
     "color:#9a9a9a;}"
     ".match-entry{display:inline-flex;align-items:center;"
-    "gap:0.22rem;margin-right:0.55rem;}"
-    ".match-place{font-weight:700;font-size:0.72rem;"
-    "color:#777777;}"
+    "gap:0.2rem;margin-right:0.6rem;}"
+    ".match-place{font-weight:700;font-size:0.7rem;"
+    "color:#888888;}"
     ".match-date{font-size:0.74rem;color:#777777;}"
     ".value-plus{color:#12a150;font-weight:600;}"
     ".value-minus{color:#e03131;font-weight:600;}"
@@ -1929,7 +2069,7 @@ def render_squad_table(frame, columns):
     """
     Zeichnet die Kadertabelle als HTML.
 
-    Nur so kann ein Logo direkt neben dem Namen stehen.
+    Nur so können Bilder direkt neben Text stehen.
     """
     header_cells = "".join(
         f"<th>{escape(column)}</th>" for column in columns
@@ -2415,10 +2555,12 @@ kpis_expanded = st.sidebar.checkbox(
 # Vereine und Spielplan laden
 # ---------------------------------------------------------
 
-matches_key = f"team_matches_v2_{league_id}"
+matches_key = f"team_matches_v3_{league_id}"
 
 if matches_key not in st.session_state:
-    with st.spinner("Vereine und Spielplan werden geladen …"):
+    with st.spinner(
+        "Vereine und Spielplan werden geladen …"
+    ):
         st.session_state[matches_key] = (
             load_team_and_match_data(api, league_id)
         )
@@ -3312,7 +3454,7 @@ with st.expander(
 
 
 # ---------------------------------------------------------
-# Kadertabelle mit Logos
+# Kadertabelle mit Bildern
 # ---------------------------------------------------------
 
 if compact:
@@ -3367,18 +3509,44 @@ elif players:
 
         team_id = get_team_id(player)
         club_label = get_club_label(player, teams)
-        club_logo = get_player_logo(player, teams)
+        club_logo = get_player_club_logo(player, teams)
+        player_photo = get_player_photo(player)
 
         if compact:
             player_name = get_short_player_name(player)
         else:
             player_name = get_player_name(player)
 
-        # Logo und Name stehen in derselben Spalte
+        # Spielerbild, Name und kleines Vereinslogo
+        photo_html = ""
+
+        if player_photo:
+            photo_html = image_html(
+                player_photo,
+                player_name,
+                24,
+                "player-photo",
+            )
+
+        club_logo_html = ""
+
+        if club_logo:
+            club_logo_html = image_html(
+                club_logo,
+                club_label,
+                15,
+            )
+        elif club_label:
+            club_logo_html = (
+                "<span class='match-place'>"
+                f"{escape(club_label)}</span>"
+            )
+
         player_html = (
-            f"{logo_html(club_logo, club_label, 18)}"
+            f"{photo_html}"
             f"<span class='squad-player-name'>"
             f"{escape(player_name)}</span>"
+            f"{club_logo_html}"
         )
 
         player_rows.append(
@@ -3448,8 +3616,9 @@ elif players:
     render_squad_table(player_frame, player_columns)
 
     st.caption(
-        "Das Logo links vom Namen ist der eigene Verein. "
-        "H bedeutet Heimspiel, A bedeutet Auswärtsspiel."
+        "Links das Spielerbild, rechts daneben das "
+        "Vereinslogo. H bedeutet Heimspiel, "
+        "A bedeutet Auswärtsspiel."
     )
 
 else:
@@ -3506,14 +3675,25 @@ with st.expander("Alle Daten zu einem Spieler"):
         inspect_player = players[inspect_index]
 
         st.write(
-            "Erkannte Vereins-ID: "
+            "Vereins-ID: "
             + str(get_team_id(inspect_player))
         )
 
         st.write(
-            "Erkanntes Logo: "
+            "Spielerbild: "
             + str(
-                get_player_logo(inspect_player, teams)
+                get_player_photo(inspect_player)
+                or "nicht gefunden"
+            )
+        )
+
+        st.write(
+            "Vereinslogo: "
+            + str(
+                get_player_club_logo(
+                    inspect_player,
+                    teams,
+                )
                 or "nicht gefunden"
             )
         )
