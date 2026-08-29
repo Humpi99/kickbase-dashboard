@@ -296,7 +296,21 @@ class KickbaseAPI:
 
         return self.try_paths(paths)
 
-    def get_matches(self, league_id):
+    def get_competition(self, competition_id="1"):
+        """
+        Lädt die Wettbewerbsdaten der Bundesliga.
+
+        Hier stehen Vereinsnamen, Kürzel und Logos.
+        """
+        paths = [
+            f"/v4/competitions/{competition_id}",
+            f"/v4/competitions/{competition_id}/teams",
+            f"/v4/competitions/{competition_id}/table",
+        ]
+
+        return self.try_paths(paths)
+
+    def get_matches(self, league_id, competition_id="1"):
         """
         Lädt mögliche Spielpläne der Bundesliga.
 
@@ -304,9 +318,9 @@ class KickbaseAPI:
         Deshalb werden mehrere Pfade probiert.
         """
         paths = [
-            "/v4/competitions/1/matches",
-            "/v4/competitions/1/matchdays",
-            "/v4/competitions/1/matchday",
+            f"/v4/competitions/{competition_id}/matches",
+            f"/v4/competitions/{competition_id}/matchdays",
+            f"/v4/competitions/{competition_id}/matchday",
             f"/v4/leagues/{league_id}/matches",
             f"/v4/leagues/{league_id}/matchdays",
             "/v4/matches",
@@ -314,11 +328,11 @@ class KickbaseAPI:
 
         return self.try_paths(paths)
 
-    def get_teams(self):
+    def get_teams(self, competition_id="1"):
         """Lädt mögliche Vereinslisten der Bundesliga."""
         paths = [
-            "/v4/competitions/1/teams",
-            "/v4/competitions/1",
+            f"/v4/competitions/{competition_id}/teams",
+            f"/v4/competitions/{competition_id}",
             "/v4/teams",
         ]
 
