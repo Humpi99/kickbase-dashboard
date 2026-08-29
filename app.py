@@ -39,6 +39,12 @@ REQUIRED_LINEUP_SIZE = 11
 # Basis für Bildadressen, die nur als Dateiname kommen.
 IMAGE_BASE_URL = "https://kickbase.b-cdn.net/"
 
+# Einheitliche Größe aller Vereinslogos.
+TEAM_LOGO_SIZE = 17
+
+# Größe des runden Spielerbildes.
+PLAYER_PHOTO_SIZE = 24
+
 
 # ---------------------------------------------------------
 # Basis-Hilfsfunktionen
@@ -611,7 +617,8 @@ def get_player_photo(player):
     )
 
 
-def image_html(url, label, size=18, css_class="team-logo"):
+def image_html(url, label, size=TEAM_LOGO_SIZE,
+               css_class="team-logo"):
     """
     Baut ein kleines Bild.
 
@@ -1080,7 +1087,7 @@ def build_next_matches_html(team_id, next_matches, teams):
         parts.append(
             "<span class='match-entry'>"
             f"<span class='match-place'>{entry['place']}</span>"
-            f"{image_html(opponent_logo, opponent_name, 17)}"
+            f"{image_html(opponent_logo, opponent_name)}"
             f"<span class='match-date'>{entry['date']}</span>"
             "</span>"
         )
@@ -3517,24 +3524,25 @@ elif players:
         else:
             player_name = get_player_name(player)
 
-        # Spielerbild, Name und kleines Vereinslogo
+        # Spielerbild links, Name, dann Vereinslogo
         photo_html = ""
 
         if player_photo:
             photo_html = image_html(
                 player_photo,
                 player_name,
-                24,
+                PLAYER_PHOTO_SIZE,
                 "player-photo",
             )
 
+        # Gleiche Größe wie die Logos bei den Matches
         club_logo_html = ""
 
         if club_logo:
             club_logo_html = image_html(
                 club_logo,
                 club_label,
-                15,
+                TEAM_LOGO_SIZE,
             )
         elif club_label:
             club_logo_html = (
