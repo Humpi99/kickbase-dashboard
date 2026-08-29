@@ -1,7 +1,7 @@
 """
 Kickbase Liga-Dashboard.
 
-Ansichten: Manager und Liga.
+Ansichten: Manager, Liga und Transfermarkt.
 Optimiert für Desktop und Handy.
 """
 
@@ -14,6 +14,7 @@ from cryptography.fernet import Fernet, InvalidToken
 from streamlit_cookies_controller import CookieController
 
 from kickbase_api import KickbaseAPI
+from transfermarkt import render_transfer_market
 
 
 # ---------------------------------------------------------
@@ -431,14 +432,10 @@ def find_days_to_matchday(api, league_id):
         next_date = min(dates)
         difference = next_date - now
 
-        # Angefangene Tage werden als voller verbleibender Tag behandelt.
         days = max(
             0,
             int(
-                (
-                    difference.total_seconds()
-                    + 86_399
-                )
+                (difference.total_seconds() + 86_399)
                 // 86_400
             ),
         )
@@ -688,16 +685,10 @@ def remove_login_cookie(cookie_controller):
     try:
         cookie_controller.remove(SESSION_COOKIE_NAME)
     except Exception:
-        # Das Cookie kann bereits fehlen oder die Komponente
-        # ist beim ersten Rendern noch nicht vollständig bereit.
         pass
 
 
-def save_login_cookie(
-    cookie_controller,
-    api,
-    leagues,
-):
+def save_login_cookie(cookie_controller, api, leagues):
     """Speichert Token und Basisdaten verschlüsselt."""
     cipher = get_cookie_cipher()
 
@@ -757,9 +748,7 @@ def restore_login_cookie(cookie_controller):
             encrypted.encode("utf-8")
         )
 
-        payload = json.loads(
-            decrypted.decode("utf-8")
-        )
+        payload = json.loads(decrypted.decode("utf-8"))
 
         expires_at = datetime.fromisoformat(
             payload["expires_at"]
@@ -792,7 +781,6 @@ def restore_login_cookie(cookie_controller):
             own_user_id=own_user_id,
         )
 
-        # Das Token wird mit einer echten Anfrage geprüft.
         first_league_id = get_league_id(leagues[0])
 
         if not first_league_id:
@@ -1166,8 +1154,7 @@ def compute_own_bonus(api, league_id, real_balance):
     )
 
     total_profit = (
-        stats["profit_in_club"]
-        + (realized or 0.0)
+        stats["profit_in_club"] + (realized or 0.0)
     )
 
     plain = (
@@ -1208,18 +1195,14 @@ def color_by_value(value):
 
     if number > 0:
         return (
-            f"color: {COLOR_POSITIVE}; "
-            "font-weight: 600"
+            f"color: {COLOR_POSITIVE}; font-weight: 600"
         )
 
-    return (
-        f"color: {COLOR_NEGATIVE}; "
-        "font-weight: 600"
-    )
+    return f"color: {COLOR_NEGATIVE}; font-weight: 600"
 
 
 def apply_value_colors(styled, columns):
-    """Unterstützt neue und ältere Pandas-Styler-Versionen."""
+    """Unterstützt neue und ältere Pandas-Versionen."""
     if not columns:
         return styled
 
@@ -1261,10 +1244,7 @@ def style_player_table(frame):
         if column in frame.columns
     ]
 
-    styled = apply_value_colors(
-        styled,
-        signed_columns,
-    )
+    styled = apply_value_colors(styled, signed_columns)
 
     formats = {}
 
@@ -1513,12 +1493,6 @@ st.markdown(
         margin: 0.25rem 0 0.35rem 0;
     }
 
-    .top-navigation div.stButton > button {
-        border-radius: 9px;
-        font-weight: 650;
-        min-height: 2.6rem;
-    }
-
     section[data-testid="stSidebar"] div.stButton > button {
         width: 100%;
         border-radius: 8px;
@@ -1588,9 +1562,7 @@ if (
     not st.session_state.get("logged_in")
     and not st.session_state.get("cookie_checked")
 ):
-    restored = restore_login_cookie(
-        cookie_controller
-    )
+    restored = restore_login_cookie(cookie_controller)
 
     st.session_state["cookie_checked"] = True
 
@@ -1637,7 +1609,7 @@ if not st.session_state.get("logged_in"):
                 value=True,
                 help=(
                     "Das Passwort wird nicht gespeichert. "
-                    "Stattdessen wird das Kickbase-Token "
+                    "Nur das Kickbase-Token wird "
                     "verschlüsselt im Browser abgelegt."
                 ),
             )
@@ -1649,10 +1621,12 @@ if not st.session_state.get("logged_in"):
             )
 
         if get_cookie_cipher() is None:
-            st.warning(
-                "Die dauerhafte Anmeldung ist noch nicht "
-                "eingerichtet. Hinterlege COOKIE_SECRET in "
-                "den Streamlit Secrets."
+            st.info(
+                "Die dauerhafte Anmeldung ist optional. "
+                "Für sie muss COOKIE_SECRET in den "
+                "Streamlit Secrets hinterlegt werden. "
+                "Ohne diesen Schlüssel funktioniert die "
+                "normale Anmeldung trotzdem."
             )
 
         st.markdown(
@@ -1687,8 +1661,8 @@ if not st.session_state.get("logged_in"):
 
                     if not leagues:
                         st.error(
-                            "Login erfolgreich, aber es wurde "
-                            "keine Liga erkannt."
+                            "Login erfolgreich, aber es "
+                            "wurde keine Liga erkannt."
                         )
                         st.stop()
 
@@ -1800,9 +1774,6 @@ if st.sidebar.button(
 ):
     st.session_state.pop(bonus_key, None)
     st.session_state.pop(budget_key, None)
-
-    # Auch die Liga-Daten werden entfernt, damit wirklich
-    # aktuelle Werte in die Berechnung einfließen.
     st.session_state.pop(
         f"league_rows_v5_{league_id}",
         None,
@@ -1824,9 +1795,7 @@ if own_bonus_info is not None:
     suggested_bonus = (
         own_bonus_info["bonus"] / 1_000_000
     )
-    bonus_hint = (
-        "Vorschlag aus der eigenen Differenz."
-    )
+    bonus_hint = "Vorschlag aus der eigenen Differenz."
 else:
     suggested_bonus = 0.0
     bonus_hint = (
@@ -1980,12 +1949,7 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-st.markdown(
-    "<div class='top-navigation'>",
-    unsafe_allow_html=True,
-)
-
-manager_nav, league_nav = st.columns(2)
+manager_nav, league_nav, market_nav = st.columns(3)
 
 with manager_nav:
     if st.button(
@@ -2017,9 +1981,36 @@ with league_nav:
         st.session_state["came_from_league"] = False
         st.rerun()
 
-st.markdown("</div>", unsafe_allow_html=True)
+with market_nav:
+    if st.button(
+        "🛒 Transfermarkt",
+        key="nav_transfermarkt",
+        type=(
+            "primary"
+            if st.session_state["view"] == "Transfermarkt"
+            else "secondary"
+        ),
+        use_container_width=True,
+    ):
+        st.session_state["view"] = "Transfermarkt"
+        st.session_state["came_from_league"] = False
+        st.rerun()
 
 view = st.session_state["view"]
+
+
+# ---------------------------------------------------------
+# Transfermarkt-Ansicht
+# ---------------------------------------------------------
+
+if view == "Transfermarkt":
+    render_transfer_market(
+        api,
+        league_id,
+        compact=compact,
+    )
+
+    st.stop()
 
 
 # ---------------------------------------------------------
@@ -2216,13 +2207,9 @@ if view == "Liga":
         ]
 
     sortable_frame = league_frame[
-        [
-            "Manager-ID",
-            *visible_columns,
-        ]
+        ["Manager-ID", *visible_columns]
     ].copy()
 
-    # Manager-ID wird intern mitgeführt, aber nicht angezeigt.
     sortable_frame = sort_controls(
         sortable_frame,
         visible_columns,
@@ -2257,7 +2244,6 @@ if view == "Liga":
             **dataframe_arguments,
         )
     except TypeError:
-        # Fallback für eine ältere Streamlit-Version.
         selection = None
 
         st.dataframe(
@@ -2267,7 +2253,7 @@ if view == "Liga":
 
         st.info(
             "Der Zeilenklick benötigt eine neuere "
-            "Streamlit-Version. Aktualisiere requirements.txt."
+            "Streamlit-Version."
         )
 
     if own_budget is not None:
@@ -2444,11 +2430,7 @@ total_profit = stats["profit_in_club"]
 if realized_profit is not None:
     total_profit += realized_profit
 
-real_balance = (
-    own_budget
-    if viewing_self
-    else None
-)
+real_balance = own_budget if viewing_self else None
 
 budget = compute_budget(
     stats,
@@ -2480,7 +2462,9 @@ with st.expander(
         [
             (
                 "Start 11",
-                format_currency(stats["lineup_value"]),
+                format_currency(
+                    stats["lineup_value"]
+                ),
                 [
                     (
                         "Einstand: "
@@ -2492,7 +2476,9 @@ with st.expander(
             ),
             (
                 "Trading",
-                format_currency(stats["trading_value"]),
+                format_currency(
+                    stats["trading_value"]
+                ),
                 [
                     (
                         "Einstand: "
@@ -2504,7 +2490,9 @@ with st.expander(
             ),
             (
                 "Gesamt",
-                format_currency(stats["squad_value"]),
+                format_currency(
+                    stats["squad_value"]
+                ),
                 [
                     (
                         "Einstand: "
@@ -2662,8 +2650,12 @@ elif players:
                 "Spieler": player_name,
                 "Position": position_name,
                 "Status": status,
-                "Einstandspreis": get_buy_price(player),
-                "Marktwert": get_market_value(player),
+                "Einstandspreis": get_buy_price(
+                    player
+                ),
+                "Marktwert": get_market_value(
+                    player
+                ),
                 "Gewinn gesamt": get_profit(player),
                 "Trend 24 Stunden": (
                     get_daily_change(player)
@@ -2727,9 +2719,7 @@ else:
 if realized_trades:
     st.subheader("Verkaufte Spieler")
 
-    trades_frame = pd.DataFrame(
-        realized_trades
-    )
+    trades_frame = pd.DataFrame(realized_trades)
 
     trades_frame = sort_controls(
         trades_frame,
@@ -2814,7 +2804,10 @@ if not compact:
 
         st.write(
             "Budgetquelle: "
-            + str(own_budget_source or "nicht gefunden")
+            + str(
+                own_budget_source
+                or "nicht gefunden"
+            )
         )
 
         st.write(
@@ -2869,7 +2862,8 @@ if not compact:
                     )
                 elif isinstance(data, list):
                     content = (
-                        f"Liste mit {len(data)} Einträgen"
+                        f"Liste mit {len(data)} "
+                        "Einträgen"
                     )
                 else:
                     content = type(data).__name__
