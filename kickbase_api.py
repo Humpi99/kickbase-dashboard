@@ -86,9 +86,9 @@ class KickbaseAPI:
 
     def restore_session(self, token, own_user_id=None):
         """
-        Stellt eine zuvor gespeicherte Token-Sitzung wieder her.
+        Stellt eine gespeicherte Token-Sitzung wieder her.
 
-        Das Passwort wird dafür nicht benötigt und nicht gespeichert.
+        Das Passwort wird dafür nicht benötigt.
         """
         if not token:
             raise ValueError("Es wurde kein Kickbase-Token übergeben.")
@@ -101,11 +101,7 @@ class KickbaseAPI:
             self.own_user_id = None
 
     def _find_own_user_id(self, data, depth=0):
-        """
-        Sucht die eigene Benutzer-ID in der Login-Antwort.
-
-        Kickbase liefert sie häufig innerhalb eines Benutzerobjekts.
-        """
+        """Sucht die eigene Benutzer-ID in der Login-Antwort."""
         if depth > 5:
             return None
 
@@ -139,20 +135,14 @@ class KickbaseAPI:
                 if key in ["tkn", "token", "accessToken"]:
                     continue
 
-                result = self._find_own_user_id(
-                    value,
-                    depth + 1,
-                )
+                result = self._find_own_user_id(value, depth + 1)
 
                 if result:
                     return result
 
         if isinstance(data, list):
             for item in data:
-                result = self._find_own_user_id(
-                    item,
-                    depth + 1,
-                )
+                result = self._find_own_user_id(item, depth + 1)
 
                 if result:
                     return result
@@ -191,9 +181,7 @@ class KickbaseAPI:
                 "Anmeldung abgelaufen. Bitte neu anmelden."
             )
 
-        raise Exception(
-            f"{path}: Status {response.status_code}"
-        )
+        raise Exception(f"{path}: Status {response.status_code}")
 
     def try_paths(self, paths, params=None):
         """Testet mehrere Endpunkte und sammelt alle Treffer."""
@@ -233,11 +221,7 @@ class KickbaseAPI:
         return self.get(path)
 
     def explore_manager(self, league_id, manager_id):
-        """
-        Probiert bekannte Manager-Endpunkte durch.
-
-        Dient zur Diagnose verfügbarer Informationen.
-        """
+        """Probiert bekannte Manager-Endpunkte zur Diagnose durch."""
         base = f"/v4/leagues/{league_id}/managers/{manager_id}"
         user_base = f"/v4/leagues/{league_id}/users/{manager_id}"
 
@@ -308,11 +292,13 @@ class KickbaseAPI:
 
     def get_market(self, league_id):
         """Lädt den Transfermarkt der Liga."""
-        return self.try_paths(
-            [
-                f"/v4/leagues/{league_id}/market",
-            ]
-        )
+        paths = [
+            f"/v4/leagues/{league_id}/market",
+            f"/v4/leagues/{league_id}/market/players",
+            f"/v4/leagues/{league_id}/transfermarket",
+        ]
+
+        return self.try_paths(paths)
 
     def find_field(self, data, field_name, depth=0):
         """Sucht rekursiv nach einem Feld mit Zahlenwert."""
@@ -357,11 +343,7 @@ class KickbaseAPI:
         return None
 
     def get_realized_profit(self, league_id, manager_id):
-        """
-        Liest den realisierten Gewinn aus dem Feld prft.
-
-        Rückgabe: (Wert, Quelle).
-        """
+        """Liest den realisierten Gewinn aus dem Feld prft."""
         base = f"/v4/leagues/{league_id}/managers/{manager_id}"
         user_base = f"/v4/leagues/{league_id}/users/{manager_id}"
 
@@ -390,11 +372,7 @@ class KickbaseAPI:
         return None, None
 
     def get_budget(self, league_id):
-        """
-        Liest den echten Kontostand des angemeldeten Nutzers.
-
-        Rückgabe: (Wert, Quelle).
-        """
+        """Liest den echten Kontostand des angemeldeten Nutzers."""
         paths = [
             f"/v4/leagues/{league_id}/me/budget",
             f"/v4/leagues/{league_id}/me",
