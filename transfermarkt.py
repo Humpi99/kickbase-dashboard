@@ -3,8 +3,6 @@ Transfermarkt-Ansicht für das Kickbase-Dashboard.
 
 Die Feldnamen der inoffiziellen Kickbase-API können abweichen.
 Deshalb werden mehrere mögliche Bezeichnungen geprüft.
-Unbekannte Werte werden nicht geschätzt, sondern als
-nicht verfügbar angezeigt.
 """
 
 from datetime import datetime, timezone
@@ -399,7 +397,7 @@ def get_club_name(item):
 
 
 def get_daily_change(item):
-    """Ermittelt die Marktwertänderung der letzten 24 Stunden."""
+    """Ermittelt die Änderung der letzten 24 Stunden."""
     value = to_number(first_value(item, DAILY_CHANGE_KEYS))
 
     if value is not None:
@@ -713,7 +711,12 @@ def build_market_rows(items):
 
 
 def market_card(row):
-    """Erstellt das HTML einer Spielerkachel."""
+    """
+    Erstellt das HTML einer Spielerkachel.
+
+    Wichtig: Das HTML darf keine Einrückung enthalten.
+    Sonst zeigt Streamlit den Code als Text an.
+    """
     daily_change = to_number(row["daily_change"])
 
     if daily_change is None or daily_change == 0:
@@ -731,194 +734,95 @@ def market_card(row):
     status = escape(str(row["status"]))
     probability = escape(str(row["probability"]))
 
-    return f"""
-    <article class="market-card">
-        <div class="market-card-header">
-            <div>
-                <div class="market-player-name">{name}</div>
-                <div class="market-player-meta">{club}</div>
-            </div>
-            <div class="market-position">{position}</div>
-        </div>
+    parts = [
+        "<article class='market-card'>",
+        "<div class='market-card-header'>",
+        "<div>",
+        f"<div class='market-player-name'>{name}</div>",
+        f"<div class='market-player-meta'>{club}</div>",
+        "</div>",
+        f"<div class='market-position'>{position}</div>",
+        "</div>",
+        "<div class='market-main-value'>"
+        f"{format_currency(row['market_value'])}</div>",
+        "<div class='market-main-label'>Marktwert</div>",
+        "<div class='market-value-grid'>",
+        "<div class='market-detail'><span>Kaufpreis</span>"
+        f"<strong>{format_currency(row['purchase_price'])}"
+        "</strong></div>",
+        "<div class='market-detail'><span>Trend 24 Std."
+        "</span>"
+        f"<strong style='color:{trend_color};'>"
+        f"{format_signed_currency(row['daily_change'])}"
+        "</strong></div>",
+        "<div class='market-detail'><span>Trend 3 Tage"
+        "</span><strong>Mit Historie</strong></div>",
+        "<div class='market-detail'><span>Anbieter</span>"
+        f"<strong>{seller}</strong></div>",
+        "<div class='market-detail'><span>Angebotszeit"
+        f"</span><strong>{remaining}</strong></div>",
+        "<div class='market-detail'><span>Punkte</span>"
+        f"<strong>{format_points(row['points'])}"
+        "</strong></div>",
+        "<div class='market-detail'><span>Ø Punkte</span>"
+        f"<strong>{format_points(row['average_points'])}"
+        "</strong></div>",
+        "<div class='market-detail'><span>Status</span>"
+        f"<strong>{status}</strong></div>",
+        "<div class='market-detail'><span>Einsatzchance"
+        f"</span><strong>{probability}</strong></div>",
+        "</div>",
+        "</article>",
+    ]
 
-        <div class="market-main-value">
-            {format_currency(row["market_value"])}
-        </div>
-        <div class="market-main-label">Marktwert</div>
+    return "".join(parts)
 
-        <div class="market-value-grid">
-            <div class="market-detail">
-                <span>Kaufpreis</span>
-                <strong>
-                    {format_currency(row["purchase_price"])}
-                </strong>
-            </div>
 
-            <div class="market-detail">
-                <span>Trend 24 Std.</span>
-                <strong style="color:{trend_color};">
-                    {format_signed_currency(row["daily_change"])}
-                </strong>
-            </div>
-
-            <div class="market-detail">
-                <span>Trend 3 Tage</span>
-                <strong>Mit Historie</strong>
-            </div>
-
-            <div class="market-detail">
-                <span>Anbieter</span>
-                <strong>{seller}</strong>
-            </div>
-
-            <div class="market-detail">
-                <span>Angebotszeit</span>
-                <strong>{remaining}</strong>
-            </div>
-
-            <div class="market-detail">
-                <span>Punkte</span>
-                <strong>{format_points(row["points"])}</strong>
-            </div>
-
-            <div class="market-detail">
-                <span>Ø Punkte</span>
-                <strong>
-                    {format_points(row["average_points"])}
-                </strong>
-            </div>
-
-            <div class="market-detail">
-                <span>Status</span>
-                <strong>{status}</strong>
-            </div>
-
-            <div class="market-detail">
-                <span>Einsatzchance</span>
-                <strong>{probability}</strong>
-            </div>
-        </div>
-    </article>
-    """
+MARKET_STYLE = (
+    "<style>"
+    ".market-grid{display:grid;"
+    "grid-template-columns:repeat(auto-fit,minmax(290px,1fr));"
+    "gap:1rem;margin-top:1rem;margin-bottom:1.5rem;}"
+    ".market-card{border:1px solid #e6e6e6;"
+    "border-radius:14px;background:#ffffff;padding:1rem;"
+    "box-shadow:0 2px 10px rgba(0,0,0,0.035);}"
+    ".market-card-header{display:flex;"
+    "align-items:flex-start;justify-content:space-between;"
+    "gap:0.7rem;padding-bottom:0.8rem;"
+    "border-bottom:1px solid #eeeeee;}"
+    ".market-player-name{color:#1c1c1c;font-size:1.08rem;"
+    "font-weight:750;line-height:1.25;}"
+    ".market-player-meta{color:#777777;font-size:0.78rem;"
+    "margin-top:0.2rem;}"
+    ".market-position{color:#555555;background:#f3f3f3;"
+    "border-radius:999px;padding:0.25rem 0.55rem;"
+    "font-size:0.72rem;white-space:nowrap;}"
+    ".market-main-value{color:#1c1c1c;font-size:1.55rem;"
+    "font-weight:800;margin-top:0.9rem;}"
+    ".market-main-label{color:#888888;font-size:0.74rem;"
+    "margin-bottom:0.85rem;}"
+    ".market-value-grid{display:grid;"
+    "grid-template-columns:repeat(2,minmax(0,1fr));"
+    "gap:0.65rem;}"
+    ".market-detail{background:#fafafa;"
+    "border:1px solid #f0f0f0;border-radius:9px;"
+    "padding:0.55rem 0.6rem;min-width:0;}"
+    ".market-detail span{display:block;color:#888888;"
+    "font-size:0.68rem;margin-bottom:0.18rem;}"
+    ".market-detail strong{display:block;color:#242424;"
+    "font-size:0.82rem;overflow-wrap:anywhere;}"
+    "@media (max-width:640px){"
+    ".market-grid{grid-template-columns:1fr;gap:0.7rem;}"
+    ".market-card{padding:0.8rem;border-radius:11px;}"
+    ".market-main-value{font-size:1.3rem;}"
+    ".market-detail{padding:0.48rem 0.5rem;}}"
+    "</style>"
+)
 
 
 def render_transfer_market(api, league_id, compact=False):
     """Rendert die komplette Transfermarkt-Ansicht."""
-    st.markdown(
-        """
-        <style>
-        .market-grid {
-            display: grid;
-            grid-template-columns:
-                repeat(auto-fit, minmax(290px, 1fr));
-            gap: 1rem;
-            margin-top: 1rem;
-            margin-bottom: 1.5rem;
-        }
-
-        .market-card {
-            border: 1px solid #e6e6e6;
-            border-radius: 14px;
-            background: #ffffff;
-            padding: 1rem;
-            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.035);
-        }
-
-        .market-card-header {
-            display: flex;
-            align-items: flex-start;
-            justify-content: space-between;
-            gap: 0.7rem;
-            padding-bottom: 0.8rem;
-            border-bottom: 1px solid #eeeeee;
-        }
-
-        .market-player-name {
-            color: #1c1c1c;
-            font-size: 1.08rem;
-            font-weight: 750;
-            line-height: 1.25;
-        }
-
-        .market-player-meta {
-            color: #777777;
-            font-size: 0.78rem;
-            margin-top: 0.2rem;
-        }
-
-        .market-position {
-            color: #555555;
-            background: #f3f3f3;
-            border-radius: 999px;
-            padding: 0.25rem 0.55rem;
-            font-size: 0.72rem;
-            white-space: nowrap;
-        }
-
-        .market-main-value {
-            color: #1c1c1c;
-            font-size: 1.55rem;
-            font-weight: 800;
-            margin-top: 0.9rem;
-        }
-
-        .market-main-label {
-            color: #888888;
-            font-size: 0.74rem;
-            margin-bottom: 0.85rem;
-        }
-
-        .market-value-grid {
-            display: grid;
-            grid-template-columns: repeat(2, minmax(0, 1fr));
-            gap: 0.65rem;
-        }
-
-        .market-detail {
-            background: #fafafa;
-            border: 1px solid #f0f0f0;
-            border-radius: 9px;
-            padding: 0.55rem 0.6rem;
-            min-width: 0;
-        }
-
-        .market-detail span {
-            display: block;
-            color: #888888;
-            font-size: 0.68rem;
-            margin-bottom: 0.18rem;
-        }
-
-        .market-detail strong {
-            display: block;
-            color: #242424;
-            font-size: 0.82rem;
-            overflow-wrap: anywhere;
-        }
-
-        @media (max-width: 640px) {
-            .market-grid {
-                grid-template-columns: 1fr;
-                gap: 0.7rem;
-            }
-
-            .market-card {
-                padding: 0.8rem;
-                border-radius: 11px;
-            }
-
-            .market-main-value {
-                font-size: 1.3rem;
-            }
-
-            .market-detail {
-                padding: 0.48rem 0.5rem;
-            }
-        }
-        </style>
-        """,
-        unsafe_allow_html=True,
-    )
+    st.markdown(MARKET_STYLE, unsafe_allow_html=True)
 
     st.subheader("Transfermarkt")
 
@@ -929,7 +833,7 @@ def render_transfer_market(api, league_id, compact=False):
             "Drei-Tage-Trend folgt mit der Historie."
         )
 
-    cache_key = f"transfer_market_v1_{league_id}"
+    cache_key = f"transfer_market_v2_{league_id}"
 
     if st.button(
         "Transfermarkt neu laden",
@@ -963,8 +867,7 @@ def render_transfer_market(api, league_id, compact=False):
     if not rows:
         st.warning(
             "Es konnten noch keine Marktspieler sicher "
-            "erkannt werden. Öffne unten die Diagnose und "
-            "kopiere die Rohdaten für die nächste Anpassung."
+            "erkannt werden. Öffne unten die Diagnose."
         )
 
         if sources:
