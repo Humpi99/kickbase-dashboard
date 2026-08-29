@@ -32,6 +32,9 @@ BASE_BUDGET = 150_000_000
 SESSION_COOKIE_NAME = "kickbase_dashboard_session"
 SESSION_COOKIE_DAYS = 30
 
+# Eine vollständige Startelf besteht aus 11 Spielern.
+REQUIRED_LINEUP_SIZE = 11
+
 
 # ---------------------------------------------------------
 # Basis-Hilfsfunktionen
@@ -258,6 +261,111 @@ def get_short_player_name(player):
 
 
 # ---------------------------------------------------------
+# Verein eines Spielers
+# ---------------------------------------------------------
+
+TEAM_ID_KEYS = [
+    "tid",
+    "teamId",
+    "ti",
+    "clubId",
+    "ci",
+]
+
+TEAM_NAME_KEYS = [
+    "teamName",
+    "clubName",
+    "tn",
+    "cn",
+]
+
+TEAM_SHORT_KEYS = [
+    "tabb",
+    "teamAbbreviation",
+    "abbreviation",
+    "tsym",
+    "symbol",
+    "shortName",
+    "sn",
+]
+
+
+def get_team_id(player):
+    """Ermittelt die Vereins-ID eines Spielers."""
+    value = first_value(player, TEAM_ID_KEYS)
+
+    if value is None:
+        return None
+
+    return str(value)
+
+
+def get_club_label(player, team_names=None):
+    """
+    Ermittelt eine kurze Vereinsbezeichnung.
+
+    Reihenfolge: Kürzel, Name, Name aus der Vereinsliste.
+    """
+    short_name = first_value(player, TEAM_SHORT_KEYS)
+
+    if short_name:
+        return str(short_name)
+
+    club_name = first_value(player, TEAM_NAME_KEYS)
+
+    if isinstance(club_name, dict):
+        club_name = first_value(
+            club_name,
+            ["name", "n"],
+        )
+
+    if club_name:
+        return str(club_name)
+
+    for container_key in ["team", "club"]:
+        container = player.get(container_key)
+
+        if isinstance(container, dict):
+            nested = first_value(
+                container,
+                ["name", "n", "teamName", "clubName"],
+            )
+
+            if nested:
+                return str(nested)
+
+        elif container:
+            return str(container)
+
+    team_id = get_team_id(player)
+
+    if team_names and team_id and team_id in team_names:
+        return str(team_names[team_id])
+
+    return ""
+
+
+def build_player_label(player, team_names=None,
+                       compact=False):
+    """
+    Baut die Anzeige für die Spalte Spieler.
+
+    Der Verein steht in derselben Spalte hinter dem Namen.
+    """
+    if compact:
+        name = get_short_player_name(player)
+    else:
+        name = get_player_name(player)
+
+    club = get_club_label(player, team_names)
+
+    if club:
+        return f"{name} · {club}"
+
+    return name
+
+
+# ---------------------------------------------------------
 # Spielerfelder
 # ---------------------------------------------------------
 
@@ -310,7 +418,7 @@ def get_buy_price(player):
 
 
 def get_daily_change(player):
-    """Liest die Marktwertänderung der letzten 24 Stunden."""
+    """Liest die Änderung der letzten 24 Stunden."""
     return to_number(
         first_value(player, DAILY_CHANGE_KEYS)
     )
@@ -373,6 +481,34 @@ def parse_date_text(text):
         parsed = parsed.replace(tzinfo=timezone.utc)
 
     return parsed
+
+
+def parse_any_date(value):
+    """Liest ein Datum aus Text oder Zeitstempel."""
+    if value is None or isinstance(value, bool):
+        return None
+
+    if isinstance(value, str):
+        return parse_date_text(value)
+
+    number = to_number(value)
+
+    if number is None:
+        return None
+
+    try:
+        if number > 10_000_000_000:
+            number /= 1000
+
+        if number > 1_000_000_000:
+            return datetime.fromtimestamp(
+                number,
+                tz=timezone.utc,
+            )
+    except (ValueError, OSError, OverflowError):
+        return None
+
+    return None
 
 
 def collect_future_dates(data, depth=0):
@@ -443,6 +579,222 @@ def find_days_to_matchday(api, league_id):
         return days, path
 
     return None, None
+
+
+# ---------------------------------------------------------
+# Nächste Spiele der Vereine
+# ---------------------------------------------------------
+
+HOME_TEAM_KEYS = [
+    "t1",
+    "homeTeamId",
+    "home",
+    "ht",
+]
+
+AWAY_TEAM_KEYS = [
+    "t2",
+    "awayTeamId",
+    "away",
+    "at",
+]
+
+HOME_NAME_KEYS = [
+    "t1n",
+    "homeTeamName",
+    "htn",
+]
+
+AWAY_NAME_KEYS = [
+    "t2n",
+    "awayTeamName",
+    "atn",
+]
+
+MATCH_DATE_KEYS = [
+    "dt",
+    "date",
+    "kickoff",
+    "startDate",
+    "md",
+]
+
+
+def collect_dictionaries(data, depth=0):
+    """Sammelt rekursiv alle Dictionaries."""
+    found = []
+
+    if depth > 8:
+        return found
+
+    if isinstance(data, dict):
+        found.append(data)
+
+        for value in data.values():
+            found.extend(
+                collect_dictionaries(value, depth + 1)
+            )
+
+    elif isinstance(data, list):
+        for item in data:
+            found.extend(
+                collect_dictionaries(item, depth + 1)
+            )
+
+    return found
+
+
+def extract_team_names(team_sources):
+    """Baut eine Zuordnung von Vereins-ID zu Vereinsname."""
+    names = {}
+
+    for source in team_sources:
+        for item in collect_dictionaries(source.get("data")):
+            team_id = first_value(
+                item,
+                ["id", "i", "tid", "teamId"],
+            )
+
+            team_name = first_value(
+                item,
+                ["shortName", "sn", "tabb", "name", "n"],
+            )
+
+            if team_id is None or not team_name:
+                continue
+
+            if isinstance(team_name, (dict, list)):
+                continue
+
+            names.setdefault(
+                str(team_id),
+                str(team_name),
+            )
+
+    return names
+
+
+def extract_matches(match_sources):
+    """Sammelt kommende Spiele beider Mannschaften."""
+    matches = []
+    now = datetime.now(timezone.utc)
+
+    for source in match_sources:
+        for item in collect_dictionaries(source.get("data")):
+            home_id = first_value(item, HOME_TEAM_KEYS)
+            away_id = first_value(item, AWAY_TEAM_KEYS)
+
+            if home_id is None or away_id is None:
+                continue
+
+            if isinstance(home_id, (dict, list)):
+                continue
+
+            if isinstance(away_id, (dict, list)):
+                continue
+
+            match_date = None
+
+            for key in MATCH_DATE_KEYS:
+                match_date = parse_any_date(item.get(key))
+
+                if match_date is not None:
+                    break
+
+            if match_date is None or match_date < now:
+                continue
+
+            matches.append(
+                {
+                    "home_id": str(home_id),
+                    "away_id": str(away_id),
+                    "home_name": str(
+                        first_value(
+                            item,
+                            HOME_NAME_KEYS,
+                            "",
+                        )
+                    ),
+                    "away_name": str(
+                        first_value(
+                            item,
+                            AWAY_NAME_KEYS,
+                            "",
+                        )
+                    ),
+                    "date": match_date,
+                }
+            )
+
+    return matches
+
+
+def build_next_matches(matches, team_names, count=2):
+    """
+    Baut pro Verein einen Text mit den nächsten Spielen.
+
+    Beispiel: "H BVB 30.08. · A FCB 13.09."
+    """
+    by_team = {}
+
+    for match in sorted(
+        matches,
+        key=lambda entry: entry["date"],
+    ):
+        home_id = match["home_id"]
+        away_id = match["away_id"]
+
+        home_label = (
+            match["home_name"]
+            or team_names.get(home_id, home_id)
+        )
+
+        away_label = (
+            match["away_name"]
+            or team_names.get(away_id, away_id)
+        )
+
+        date_text = match["date"].strftime("%d.%m.")
+
+        by_team.setdefault(home_id, []).append(
+            f"H {away_label} {date_text}"
+        )
+
+        by_team.setdefault(away_id, []).append(
+            f"A {home_label} {date_text}"
+        )
+
+    return {
+        team_id: " · ".join(entries[:count])
+        for team_id, entries in by_team.items()
+    }
+
+
+def load_next_matches(api, league_id):
+    """Lädt Vereinsnamen und die nächsten Spiele."""
+    try:
+        team_sources, _ = api.get_teams()
+    except Exception:
+        team_sources = []
+
+    try:
+        match_sources, match_errors = api.get_matches(
+            league_id
+        )
+    except Exception as error:
+        match_sources = []
+        match_errors = [str(error)]
+
+    team_names = extract_team_names(team_sources)
+    matches = extract_matches(match_sources)
+    next_matches = build_next_matches(matches, team_names)
+
+    return {
+        "team_names": team_names,
+        "next_matches": next_matches,
+        "match_sources": match_sources,
+        "match_errors": match_errors,
+    }
 
 
 # ---------------------------------------------------------
@@ -668,7 +1020,7 @@ def find_players_with_value(value):
 # ---------------------------------------------------------
 
 def get_cookie_cipher():
-    """Lädt den Verschlüsselungsschlüssel aus Streamlit Secrets."""
+    """Lädt den Verschlüsselungsschlüssel aus Secrets."""
     try:
         secret = st.secrets["COOKIE_SECRET"]
     except (KeyError, FileNotFoundError):
@@ -1258,8 +1610,13 @@ def style_player_table(frame):
     return styled.format(formats)
 
 
-def style_league_table(frame):
-    """Formatiert und färbt die Liga-Tabelle."""
+def style_league_table(frame, lineup_counts=None):
+    """
+    Formatiert und färbt die Liga-Tabelle.
+
+    Die Spalte Spieler wird rot, wenn die Startelf
+    nicht genau 11 Spieler enthält.
+    """
     signed_columns = [
         column
         for column in [
@@ -1288,6 +1645,36 @@ def style_league_table(frame):
         frame.style,
         signed_columns,
     )
+
+    if (
+        lineup_counts is not None
+        and "Spieler" in frame.columns
+    ):
+
+        def color_lineup(column):
+            """Färbt unvollständige Startelf-Angaben rot."""
+            styles = []
+
+            for count in lineup_counts:
+                number = to_number(count)
+
+                if (
+                    number is None
+                    or int(number) != REQUIRED_LINEUP_SIZE
+                ):
+                    styles.append(
+                        f"color: {COLOR_NEGATIVE}; "
+                        "font-weight: 700"
+                    )
+                else:
+                    styles.append("")
+
+            return styles
+
+        styled = styled.apply(
+            color_lineup,
+            subset=["Spieler"],
+        )
 
     formats = {}
 
@@ -1624,9 +2011,7 @@ if not st.session_state.get("logged_in"):
             st.info(
                 "Die dauerhafte Anmeldung ist optional. "
                 "Für sie muss COOKIE_SECRET in den "
-                "Streamlit Secrets hinterlegt werden. "
-                "Ohne diesen Schlüssel funktioniert die "
-                "normale Anmeldung trotzdem."
+                "Streamlit Secrets hinterlegt werden."
             )
 
         st.markdown(
@@ -1742,6 +2127,24 @@ kpis_expanded = st.sidebar.checkbox(
 
 
 # ---------------------------------------------------------
+# Nächste Spiele laden
+# ---------------------------------------------------------
+
+matches_key = f"next_matches_v1_{league_id}"
+
+if matches_key not in st.session_state:
+    with st.spinner("Spielplan wird gesucht …"):
+        st.session_state[matches_key] = load_next_matches(
+            api,
+            league_id,
+        )
+
+matches_info = st.session_state[matches_key]
+team_names = matches_info["team_names"]
+next_matches = matches_info["next_matches"]
+
+
+# ---------------------------------------------------------
 # Budget-Einstellungen
 # ---------------------------------------------------------
 
@@ -1775,7 +2178,7 @@ if st.sidebar.button(
     st.session_state.pop(bonus_key, None)
     st.session_state.pop(budget_key, None)
     st.session_state.pop(
-        f"league_rows_v5_{league_id}",
+        f"league_rows_v6_{league_id}",
         None,
     )
 
@@ -1940,8 +2343,7 @@ else:
 if st.session_state.pop("cookie_warning", False):
     st.warning(
         "Die Anmeldung funktioniert, aber das Cookie "
-        "konnte nicht gespeichert werden. Prüfe "
-        "COOKIE_SECRET und die installierten Pakete."
+        "konnte nicht gespeichert werden."
     )
 
 st.markdown(
@@ -2058,11 +2460,11 @@ if view == "Liga":
     if not compact:
         st.caption(
             "Ein Klick auf eine Zeile öffnet die "
-            "Detailansicht des Managers. Der eigene "
-            "Account ist mit einem Punkt markiert."
+            "Detailansicht. Eine rote Spielerzahl "
+            "bedeutet: keine vollständige Startelf."
         )
 
-    cache_key = f"league_rows_v5_{league_id}"
+    cache_key = f"league_rows_v6_{league_id}"
 
     if st.button("Daten neu laden"):
         st.session_state.pop(cache_key, None)
@@ -2104,6 +2506,9 @@ if view == "Liga":
                     "Manager-ID": manager_id,
                     "Manager": manager_name,
                     "Ich": own,
+                    "Startelf-Anzahl": (
+                        manager_stats["lineup_count"]
+                    ),
                     "Start 11": (
                         manager_stats["lineup_value"]
                     ),
@@ -2114,6 +2519,9 @@ if view == "Liga":
                         manager_stats["squad_value"]
                     ),
                     "Spieler": (
+                        manager_stats["lineup_count"]
+                    ),
+                    "Kader": (
                         manager_stats["player_count"]
                     ),
                     "Gewinn gesamt": (
@@ -2185,6 +2593,7 @@ if view == "Liga":
     if compact:
         visible_columns = [
             "Manager",
+            "Spieler",
             "Kaderwert",
             "Gewinn gesamt",
             "Trend gesamt",
@@ -2193,10 +2602,11 @@ if view == "Liga":
     else:
         visible_columns = [
             "Manager",
+            "Spieler",
+            "Kader",
             "Start 11",
             "Trading",
             "Kaderwert",
-            "Spieler",
             "Gewinn gesamt",
             "Trend Start 11",
             "Trend Trading",
@@ -2207,7 +2617,11 @@ if view == "Liga":
         ]
 
     sortable_frame = league_frame[
-        ["Manager-ID", *visible_columns]
+        [
+            "Manager-ID",
+            "Startelf-Anzahl",
+            *visible_columns,
+        ]
     ].copy()
 
     sortable_frame = sort_controls(
@@ -2222,8 +2636,12 @@ if view == "Liga":
         "Manager-ID"
     ].tolist()
 
+    lineup_counts = sortable_frame[
+        "Startelf-Anzahl"
+    ].tolist()
+
     display_frame = sortable_frame.drop(
-        columns=["Manager-ID"]
+        columns=["Manager-ID", "Startelf-Anzahl"]
     )
 
     dataframe_arguments = {
@@ -2238,7 +2656,10 @@ if view == "Liga":
 
     try:
         selection = st.dataframe(
-            style_league_table(display_frame),
+            style_league_table(
+                display_frame,
+                lineup_counts=lineup_counts,
+            ),
             on_select="rerun",
             selection_mode="single-row",
             **dataframe_arguments,
@@ -2247,7 +2668,10 @@ if view == "Liga":
         selection = None
 
         st.dataframe(
-            style_league_table(display_frame),
+            style_league_table(
+                display_frame,
+                lineup_counts=lineup_counts,
+            ),
             **dataframe_arguments,
         )
 
@@ -2255,6 +2679,11 @@ if view == "Liga":
             "Der Zeilenklick benötigt eine neuere "
             "Streamlit-Version."
         )
+
+    st.caption(
+        "Spalte Spieler: Anzahl in der Startelf. "
+        "Rot bedeutet weniger oder mehr als 11 Spieler."
+    )
 
     if own_budget is not None:
         st.caption(
@@ -2603,6 +3032,13 @@ else:
         f"Kader von {selected_manager_name}"
     )
 
+if stats["lineup_count"] != REQUIRED_LINEUP_SIZE:
+    st.warning(
+        f"Die Startelf enthält "
+        f"{stats['lineup_count']} Spieler "
+        f"statt {REQUIRED_LINEUP_SIZE}."
+    )
+
 if squad_error:
     st.error(
         "Kader konnte nicht geladen werden: "
@@ -2639,17 +3075,23 @@ elif players:
             else "Trading"
         )
 
-        player_name = (
-            get_short_player_name(player)
-            if compact
-            else get_player_name(player)
-        )
+        team_id = get_team_id(player)
+
+        next_match_text = "—"
+
+        if team_id and team_id in next_matches:
+            next_match_text = next_matches[team_id]
 
         player_rows.append(
             {
-                "Spieler": player_name,
+                "Spieler": build_player_label(
+                    player,
+                    team_names,
+                    compact=compact,
+                ),
                 "Position": position_name,
                 "Status": status,
+                "Nächste Spiele": next_match_text,
                 "Einstandspreis": get_buy_price(
                     player
                 ),
@@ -2669,6 +3111,7 @@ elif players:
         player_columns = [
             "Spieler",
             "Status",
+            "Nächste Spiele",
             "Marktwert",
             "Gewinn gesamt",
             "Trend 24 Stunden",
@@ -2678,6 +3121,7 @@ elif players:
             "Spieler",
             "Position",
             "Status",
+            "Nächste Spiele",
             "Einstandspreis",
             "Marktwert",
             "Gewinn gesamt",
@@ -2705,7 +3149,8 @@ elif players:
     )
 
     st.caption(
-        "Trading-Spieler sind grau dargestellt."
+        "Der Verein steht hinter dem Spielernamen. "
+        "H bedeutet Heimspiel, A bedeutet Auswärtsspiel."
     )
 
 else:
@@ -2783,6 +3228,42 @@ with st.expander("Alle Daten zu einem Spieler"):
 # ---------------------------------------------------------
 
 if not compact:
+    with st.expander("Diagnose Spielplan und Vereine"):
+        st.write(
+            f"Erkannte Vereine: {len(team_names)}"
+        )
+
+        st.write(
+            f"Vereine mit nächsten Spielen: "
+            f"{len(next_matches)}"
+        )
+
+        if st.button("Spielplan neu laden"):
+            st.session_state.pop(matches_key, None)
+            st.rerun()
+
+        if team_names:
+            st.write("**Vereinsnamen:**")
+            st.json(team_names)
+
+        if next_matches:
+            st.write("**Nächste Spiele je Verein:**")
+            st.json(next_matches)
+        else:
+            st.write(
+                "Es wurde kein Spielplan erkannt. "
+                "Bitte die Rohdaten unten prüfen."
+            )
+
+        if matches_info["match_sources"]:
+            for source in matches_info["match_sources"]:
+                with st.expander(source["path"]):
+                    st.json(source["data"])
+
+        if matches_info["match_errors"]:
+            st.write("**Fehler:**")
+            st.write(matches_info["match_errors"])
+
     with st.expander(
         "Alle Daten zu diesem Manager"
     ):
@@ -2886,10 +3367,6 @@ if not compact:
                 height=table_height(
                     len(overview_frame)
                 ),
-            )
-
-            st.write(
-                "**Inhalt der einzelnen Endpunkte:**"
             )
 
             for source in manager_sources:
