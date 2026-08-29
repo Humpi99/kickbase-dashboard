@@ -7,6 +7,7 @@ Optimiert für Desktop und Handy.
 
 import json
 from datetime import datetime, timedelta, timezone
+from html import escape
 
 import pandas as pd
 import streamlit as st
@@ -34,6 +35,9 @@ SESSION_COOKIE_DAYS = 30
 
 # Eine vollständige Startelf besteht aus 11 Spielern.
 REQUIRED_LINEUP_SIZE = 11
+
+# Basis für Logo-Adressen, die nur als Dateiname kommen.
+IMAGE_BASE_URL = "https://kickbase.b-cdn.net/"
 
 
 # ---------------------------------------------------------
@@ -261,7 +265,7 @@ def get_short_player_name(player):
 
 
 # ---------------------------------------------------------
-# Verein eines Spielers
+# Vereine, Namen und Logos
 # ---------------------------------------------------------
 
 TEAM_ID_KEYS = [
@@ -289,80 +293,258 @@ TEAM_SHORT_KEYS = [
     "sn",
 ]
 
+# Mögliche Felder mit einer Bildadresse des Vereins
+TEAM_IMAGE_KEYS = [
+    "tim",
+    "teamImage",
+    "logo",
+    "logoUrl",
+    "image",
+    "imageUrl",
+    "img",
+    "pim",
+    "tiy",
+    "crest",
+]
+
+
+def build_image_url(value):
+    """
+    Baut eine vollständige Bildadresse.
+
+    Kickbase liefert manchmal nur einen Dateinamen.
+    """
+    if not value or not isinstance(value, str):
+        return ""
+
+    cleaned = value.strip()
+
+    if not cleaned:
+        return ""
+
+    if cleaned.startswith(("http://", "https://")):
+        return cleaned
+
+    if cleaned.startswith("//"):
+        return f"https:{cleaned}"
+
+    return IMAGE_BASE_URL + cleaned.lstrip("/")
+
+
+def collect_dictionaries(data, depth=0):
+    """Sammelt rekursiv alle Dictionaries."""
+    found = []
+
+    if depth > 8:
+        return found
+
+    if isinstance(data, dict):
+        found.append(data)
+
+        for value in data.values():
+            found.extend(
+                collect_dictionaries(value, depth + 1)
+            )
+
+    elif isinstance(data, list):
+        for item in data:
+            found.extend(
+                collect_dictionaries(item, depth + 1)
+            )
+
+    return found
+
+
+def looks_like_team(item):
+    """Prüft, ob ein Objekt ein Verein sein könnte."""
+    if not isinstance(item, dict):
+        return False
+
+    team_id = first_value(
+        item,
+        ["id", "i", "tid", "teamId"],
+    )
+
+    if team_id is None:
+        return False
+
+    if isinstance(team_id, (dict, list, bool)):
+        return False
+
+    has_name = any(
+        isinstance(item.get(key), str) and item.get(key)
+        for key in [
+            "name",
+            "n",
+            "shortName",
+            "sn",
+            "tabb",
+            "teamName",
+            "tn",
+        ]
+    )
+
+    has_image = any(
+        isinstance(item.get(key), str) and item.get(key)
+        for key in TEAM_IMAGE_KEYS
+    )
+
+    return has_name or has_image
+
+
+def extract_team_info(sources):
+    """
+    Baut eine Zuordnung von Vereins-ID zu Name und Logo.
+
+    Rückgabe: {"5": {"name": "FCB", "logo": "https://..."}}
+    """
+    teams = {}
+
+    for source in sources:
+        for item in collect_dictionaries(source.get("data")):
+            if not looks_like_team(item):
+                continue
+
+            team_id = str(
+                first_value(
+                    item,
+                    ["id", "i", "tid", "teamId"],
+                )
+            )
+
+            short_name = first_value(
+                item,
+                ["tabb", "shortName", "sn", "symbol"],
+            )
+
+            long_name = first_value(
+                item,
+                ["name", "n", "teamName", "tn"],
+            )
+
+            image_value = first_value(
+                item,
+                TEAM_IMAGE_KEYS,
+            )
+
+            entry = teams.setdefault(
+                team_id,
+                {
+                    "name": "",
+                    "long_name": "",
+                    "logo": "",
+                },
+            )
+
+            if not entry["name"] and isinstance(
+                short_name,
+                str,
+            ):
+                entry["name"] = short_name.strip()
+
+            if not entry["long_name"] and isinstance(
+                long_name,
+                str,
+            ):
+                entry["long_name"] = long_name.strip()
+
+            if not entry["logo"]:
+                entry["logo"] = build_image_url(image_value)
+
+    # Fehlende Kurznamen mit dem langen Namen füllen
+    for entry in teams.values():
+        if not entry["name"]:
+            entry["name"] = entry["long_name"]
+
+    return teams
+
 
 def get_team_id(player):
     """Ermittelt die Vereins-ID eines Spielers."""
     value = first_value(player, TEAM_ID_KEYS)
 
-    if value is None:
+    if value is None or isinstance(value, (dict, list)):
         return None
 
     return str(value)
 
 
-def get_club_label(player, team_names=None):
-    """
-    Ermittelt eine kurze Vereinsbezeichnung.
+def get_team_name(team_id, teams):
+    """Gibt den Vereinsnamen zu einer ID zurück."""
+    if not team_id:
+        return ""
 
-    Reihenfolge: Kürzel, Name, Name aus der Vereinsliste.
-    """
+    entry = teams.get(str(team_id))
+
+    if not entry:
+        return ""
+
+    return entry.get("name") or entry.get("long_name") or ""
+
+
+def get_team_logo(team_id, teams):
+    """Gibt die Logo-Adresse zu einer ID zurück."""
+    if not team_id:
+        return ""
+
+    entry = teams.get(str(team_id))
+
+    if not entry:
+        return ""
+
+    return entry.get("logo", "")
+
+
+def get_club_label(player, teams=None):
+    """Ermittelt eine kurze Vereinsbezeichnung."""
     short_name = first_value(player, TEAM_SHORT_KEYS)
 
-    if short_name:
-        return str(short_name)
+    if isinstance(short_name, str) and short_name.strip():
+        return short_name.strip()
 
     club_name = first_value(player, TEAM_NAME_KEYS)
 
     if isinstance(club_name, dict):
-        club_name = first_value(
-            club_name,
-            ["name", "n"],
-        )
+        club_name = first_value(club_name, ["name", "n"])
 
-    if club_name:
-        return str(club_name)
+    if isinstance(club_name, str) and club_name.strip():
+        return club_name.strip()
 
-    for container_key in ["team", "club"]:
-        container = player.get(container_key)
-
-        if isinstance(container, dict):
-            nested = first_value(
-                container,
-                ["name", "n", "teamName", "clubName"],
-            )
-
-            if nested:
-                return str(nested)
-
-        elif container:
-            return str(container)
-
-    team_id = get_team_id(player)
-
-    if team_names and team_id and team_id in team_names:
-        return str(team_names[team_id])
+    if teams:
+        return get_team_name(get_team_id(player), teams)
 
     return ""
 
 
-def build_player_label(player, team_names=None,
-                       compact=False):
+def get_player_logo(player, teams=None):
+    """Ermittelt das Logo des Vereins eines Spielers."""
+    direct_image = first_value(player, TEAM_IMAGE_KEYS)
+
+    if isinstance(direct_image, str) and direct_image.strip():
+        return build_image_url(direct_image)
+
+    if teams:
+        return get_team_logo(get_team_id(player), teams)
+
+    return ""
+
+
+def logo_html(url, label, size=18):
     """
-    Baut die Anzeige für die Spalte Spieler.
+    Baut ein kleines Logo-Bild.
 
-    Der Verein steht in derselben Spalte hinter dem Namen.
+    Ohne Adresse wird nur der Text zurückgegeben.
     """
-    if compact:
-        name = get_short_player_name(player)
-    else:
-        name = get_player_name(player)
+    safe_label = escape(str(label or ""))
 
-    club = get_club_label(player, team_names)
+    if not url:
+        return safe_label
 
-    if club:
-        return f"{name} · {club}"
-
-    return name
+    return (
+        f"<img src='{escape(url)}' alt='{safe_label}' "
+        f"title='{safe_label}' class='team-logo' "
+        f"style='height:{size}px;width:{size}px;' />"
+    )
 
 
 # ---------------------------------------------------------
@@ -599,18 +781,6 @@ AWAY_TEAM_KEYS = [
     "at",
 ]
 
-HOME_NAME_KEYS = [
-    "t1n",
-    "homeTeamName",
-    "htn",
-]
-
-AWAY_NAME_KEYS = [
-    "t2n",
-    "awayTeamName",
-    "atn",
-]
-
 MATCH_DATE_KEYS = [
     "dt",
     "date",
@@ -620,63 +790,10 @@ MATCH_DATE_KEYS = [
 ]
 
 
-def collect_dictionaries(data, depth=0):
-    """Sammelt rekursiv alle Dictionaries."""
-    found = []
-
-    if depth > 8:
-        return found
-
-    if isinstance(data, dict):
-        found.append(data)
-
-        for value in data.values():
-            found.extend(
-                collect_dictionaries(value, depth + 1)
-            )
-
-    elif isinstance(data, list):
-        for item in data:
-            found.extend(
-                collect_dictionaries(item, depth + 1)
-            )
-
-    return found
-
-
-def extract_team_names(team_sources):
-    """Baut eine Zuordnung von Vereins-ID zu Vereinsname."""
-    names = {}
-
-    for source in team_sources:
-        for item in collect_dictionaries(source.get("data")):
-            team_id = first_value(
-                item,
-                ["id", "i", "tid", "teamId"],
-            )
-
-            team_name = first_value(
-                item,
-                ["shortName", "sn", "tabb", "name", "n"],
-            )
-
-            if team_id is None or not team_name:
-                continue
-
-            if isinstance(team_name, (dict, list)):
-                continue
-
-            names.setdefault(
-                str(team_id),
-                str(team_name),
-            )
-
-    return names
-
-
 def extract_matches(match_sources):
     """Sammelt kommende Spiele beider Mannschaften."""
     matches = []
+    seen = set()
     now = datetime.now(timezone.utc)
 
     for source in match_sources:
@@ -687,10 +804,10 @@ def extract_matches(match_sources):
             if home_id is None or away_id is None:
                 continue
 
-            if isinstance(home_id, (dict, list)):
+            if isinstance(home_id, (dict, list, bool)):
                 continue
 
-            if isinstance(away_id, (dict, list)):
+            if isinstance(away_id, (dict, list, bool)):
                 continue
 
             match_date = None
@@ -704,24 +821,21 @@ def extract_matches(match_sources):
             if match_date is None or match_date < now:
                 continue
 
+            signature = (
+                str(home_id),
+                str(away_id),
+                match_date.isoformat(),
+            )
+
+            if signature in seen:
+                continue
+
+            seen.add(signature)
+
             matches.append(
                 {
                     "home_id": str(home_id),
                     "away_id": str(away_id),
-                    "home_name": str(
-                        first_value(
-                            item,
-                            HOME_NAME_KEYS,
-                            "",
-                        )
-                    ),
-                    "away_name": str(
-                        first_value(
-                            item,
-                            AWAY_NAME_KEYS,
-                            "",
-                        )
-                    ),
                     "date": match_date,
                 }
             )
@@ -729,11 +843,12 @@ def extract_matches(match_sources):
     return matches
 
 
-def build_next_matches(matches, team_names, count=2):
+def build_next_matches(matches, count=2):
     """
-    Baut pro Verein einen Text mit den nächsten Spielen.
+    Baut pro Verein eine Liste der nächsten Gegner.
 
-    Beispiel: "H BVB 30.08. · A FCB 13.09."
+    Jeder Eintrag enthält Gegner-ID, Heim oder Auswärts
+    und das Datum.
     """
     by_team = {}
 
@@ -743,35 +858,40 @@ def build_next_matches(matches, team_names, count=2):
     ):
         home_id = match["home_id"]
         away_id = match["away_id"]
-
-        home_label = (
-            match["home_name"]
-            or team_names.get(home_id, home_id)
-        )
-
-        away_label = (
-            match["away_name"]
-            or team_names.get(away_id, away_id)
-        )
-
         date_text = match["date"].strftime("%d.%m.")
 
         by_team.setdefault(home_id, []).append(
-            f"H {away_label} {date_text}"
+            {
+                "opponent_id": away_id,
+                "place": "H",
+                "date": date_text,
+            }
         )
 
         by_team.setdefault(away_id, []).append(
-            f"A {home_label} {date_text}"
+            {
+                "opponent_id": home_id,
+                "place": "A",
+                "date": date_text,
+            }
         )
 
     return {
-        team_id: " · ".join(entries[:count])
+        team_id: entries[:count]
         for team_id, entries in by_team.items()
     }
 
 
-def load_next_matches(api, league_id):
-    """Lädt Vereinsnamen und die nächsten Spiele."""
+def load_team_and_match_data(api, league_id):
+    """Lädt Vereinsdaten mit Logos und die nächsten Spiele."""
+    try:
+        competition_sources, competition_errors = (
+            api.get_competition()
+        )
+    except Exception as error:
+        competition_sources = []
+        competition_errors = [str(error)]
+
     try:
         team_sources, _ = api.get_teams()
     except Exception:
@@ -785,16 +905,71 @@ def load_next_matches(api, league_id):
         match_sources = []
         match_errors = [str(error)]
 
-    team_names = extract_team_names(team_sources)
+    teams = extract_team_info(
+        competition_sources + team_sources
+    )
+
     matches = extract_matches(match_sources)
-    next_matches = build_next_matches(matches, team_names)
+    next_matches = build_next_matches(matches)
 
     return {
-        "team_names": team_names,
+        "teams": teams,
         "next_matches": next_matches,
+        "competition_sources": competition_sources,
+        "competition_errors": competition_errors,
         "match_sources": match_sources,
         "match_errors": match_errors,
     }
+
+
+def build_next_matches_html(team_id, next_matches, teams):
+    """Baut die Anzeige der nächsten Spiele mit Logos."""
+    entries = next_matches.get(str(team_id or ""), [])
+
+    if not entries:
+        return "—"
+
+    parts = []
+
+    for entry in entries:
+        opponent_id = entry["opponent_id"]
+        opponent_name = get_team_name(opponent_id, teams)
+        opponent_logo = get_team_logo(opponent_id, teams)
+
+        if not opponent_name:
+            opponent_name = "Gegner"
+
+        parts.append(
+            "<span class='match-entry'>"
+            f"<span class='match-place'>{entry['place']}</span>"
+            f"{logo_html(opponent_logo, opponent_name, 16)}"
+            f"<span class='match-date'>{entry['date']}</span>"
+            "</span>"
+        )
+
+    return "".join(parts)
+
+
+def build_next_matches_text(team_id, next_matches, teams):
+    """Baut einen reinen Text für Sortierung und Fallback."""
+    entries = next_matches.get(str(team_id or ""), [])
+
+    if not entries:
+        return "—"
+
+    parts = []
+
+    for entry in entries:
+        opponent_name = (
+            get_team_name(entry["opponent_id"], teams)
+            or entry["opponent_id"]
+        )
+
+        parts.append(
+            f"{entry['place']} {opponent_name} {entry['date']}"
+        )
+
+    return " · ".join(parts)
 
 
 # ---------------------------------------------------------
@@ -1598,46 +1773,6 @@ def apply_value_colors(styled, columns):
     )
 
 
-def style_player_table(frame):
-    """Formatiert und färbt die Kadertabelle."""
-
-    def color_row(row):
-        if row.get("Status") == "Trading":
-            return [
-                "color: #9a9a9a; "
-                "background-color: #f7f7f7"
-            ] * len(row)
-
-        return [""] * len(row)
-
-    styled = frame.style
-
-    if "Status" in frame.columns:
-        styled = styled.apply(color_row, axis=1)
-
-    signed_columns = [
-        column
-        for column in [
-            "Gewinn gesamt",
-            "Trend 24 Stunden",
-        ]
-        if column in frame.columns
-    ]
-
-    styled = apply_value_colors(styled, signed_columns)
-
-    formats = {}
-
-    for column in ["Einstandspreis", "Marktwert"]:
-        if column in frame.columns:
-            formats[column] = currency_formatter
-
-    for column in signed_columns:
-        formats[column] = signed_formatter
-
-    return styled.format(formats)
-
-
 def style_league_table(frame, lineup_counts=None):
     """
     Formatiert und färbt die Liga-Tabelle.
@@ -1733,6 +1868,130 @@ def style_trades_table(frame):
             "Gewinn": signed_formatter,
         }
     )
+
+
+# ---------------------------------------------------------
+# Kadertabelle als HTML mit Logos
+# ---------------------------------------------------------
+
+SQUAD_STYLE = (
+    "<style>"
+    ".squad-wrapper{overflow-x:auto;margin-top:0.4rem;"
+    "margin-bottom:0.6rem;}"
+    ".squad-table{width:100%;border-collapse:collapse;"
+    "font-size:0.86rem;}"
+    ".squad-table th{text-align:left;color:#8a8a8a;"
+    "font-size:0.7rem;font-weight:600;"
+    "text-transform:uppercase;letter-spacing:0.05em;"
+    "padding:0.5rem 0.55rem;border-bottom:1px solid #e6e6e6;"
+    "white-space:nowrap;}"
+    ".squad-table td{padding:0.45rem 0.55rem;"
+    "border-bottom:1px solid #f2f2f2;vertical-align:middle;"
+    "white-space:nowrap;}"
+    ".squad-table tr.trading td{color:#9a9a9a;"
+    "background-color:#fafafa;}"
+    ".squad-player{display:flex;align-items:center;"
+    "gap:0.45rem;}"
+    ".team-logo{object-fit:contain;border-radius:3px;"
+    "flex:0 0 auto;}"
+    ".squad-player-name{font-weight:600;color:#1c1c1c;}"
+    ".squad-table tr.trading .squad-player-name{"
+    "color:#9a9a9a;}"
+    ".match-entry{display:inline-flex;align-items:center;"
+    "gap:0.22rem;margin-right:0.55rem;}"
+    ".match-place{font-weight:700;font-size:0.72rem;"
+    "color:#777777;}"
+    ".match-date{font-size:0.74rem;color:#777777;}"
+    ".value-plus{color:#12a150;font-weight:600;}"
+    ".value-minus{color:#e03131;font-weight:600;}"
+    "@media (max-width:640px){"
+    ".squad-table{font-size:0.78rem;}"
+    ".squad-table th{font-size:0.62rem;padding:0.4rem;}"
+    ".squad-table td{padding:0.38rem 0.4rem;}}"
+    "</style>"
+)
+
+
+def signed_cell_html(value):
+    """Baut eine gefärbte Zelle mit Vorzeichen."""
+    number = to_number(value)
+    text = format_signed_currency(value)
+
+    if number is None or number == 0:
+        return text
+
+    css_class = "value-plus" if number > 0 else "value-minus"
+
+    return f"<span class='{css_class}'>{text}</span>"
+
+
+def render_squad_table(frame, columns):
+    """
+    Zeichnet die Kadertabelle als HTML.
+
+    Nur so kann ein Logo direkt neben dem Namen stehen.
+    """
+    header_cells = "".join(
+        f"<th>{escape(column)}</th>" for column in columns
+    )
+
+    body_rows = []
+
+    for _, row in frame.iterrows():
+        row_class = (
+            " class='trading'"
+            if row.get("Status") == "Trading"
+            else ""
+        )
+
+        cells = []
+
+        for column in columns:
+            if column == "Spieler":
+                cells.append(
+                    "<td><div class='squad-player'>"
+                    f"{row['_spieler_html']}</div></td>"
+                )
+
+            elif column == "Nächste Spiele":
+                cells.append(
+                    f"<td>{row['_naechste_html']}</td>"
+                )
+
+            elif column in [
+                "Einstandspreis",
+                "Marktwert",
+            ]:
+                cells.append(
+                    f"<td>{format_currency(row[column])}</td>"
+                )
+
+            elif column in [
+                "Gewinn gesamt",
+                "Trend 24 Stunden",
+            ]:
+                cells.append(
+                    f"<td>{signed_cell_html(row[column])}</td>"
+                )
+
+            else:
+                cells.append(
+                    f"<td>{escape(str(row[column]))}</td>"
+                )
+
+        body_rows.append(
+            f"<tr{row_class}>{''.join(cells)}</tr>"
+        )
+
+    table_html = (
+        "<div class='squad-wrapper'>"
+        "<table class='squad-table'>"
+        f"<thead><tr>{header_cells}</tr></thead>"
+        f"<tbody>{''.join(body_rows)}</tbody>"
+        "</table></div>"
+    )
+
+    st.markdown(table_html, unsafe_allow_html=True)
 
 
 # ---------------------------------------------------------
@@ -1934,10 +2193,6 @@ st.markdown(
             font-size: 1.55rem;
         }
 
-        .login-subheading {
-            font-size: 0.9rem;
-        }
-
         .kpi-value {
             font-size: 16px !important;
             white-space: nowrap;
@@ -1965,6 +2220,8 @@ st.markdown(
     """,
     unsafe_allow_html=True,
 )
+
+st.markdown(SQUAD_STYLE, unsafe_allow_html=True)
 
 cookie_controller = CookieController()
 
@@ -2155,20 +2412,19 @@ kpis_expanded = st.sidebar.checkbox(
 
 
 # ---------------------------------------------------------
-# Nächste Spiele laden
+# Vereine und Spielplan laden
 # ---------------------------------------------------------
 
-matches_key = f"next_matches_v1_{league_id}"
+matches_key = f"team_matches_v2_{league_id}"
 
 if matches_key not in st.session_state:
-    with st.spinner("Spielplan wird gesucht …"):
-        st.session_state[matches_key] = load_next_matches(
-            api,
-            league_id,
+    with st.spinner("Vereine und Spielplan werden geladen …"):
+        st.session_state[matches_key] = (
+            load_team_and_match_data(api, league_id)
         )
 
 matches_info = st.session_state[matches_key]
-team_names = matches_info["team_names"]
+teams = matches_info["teams"]
 next_matches = matches_info["next_matches"]
 
 
@@ -2648,8 +2904,6 @@ if view == "Liga":
         ]
     ].copy()
 
-    # Die Spalte Kader ist hier noch eine Zahl.
-    # Dadurch wird numerisch und nicht alphabetisch sortiert.
     sortable_frame = sort_controls(
         sortable_frame,
         visible_columns,
@@ -2670,7 +2924,6 @@ if view == "Liga":
         columns=["Manager-ID", "Startelf-Anzahl"]
     )
 
-    # Erst nach dem Sortieren wird der Anzeigetext gebaut.
     display_frame["Kader"] = [
         build_squad_label(total, lineup)
         for total, lineup in zip(
@@ -3059,7 +3312,7 @@ with st.expander(
 
 
 # ---------------------------------------------------------
-# Kadertabelle
+# Kadertabelle mit Logos
 # ---------------------------------------------------------
 
 if compact:
@@ -3113,22 +3366,41 @@ elif players:
         )
 
         team_id = get_team_id(player)
+        club_label = get_club_label(player, teams)
+        club_logo = get_player_logo(player, teams)
 
-        next_match_text = "—"
+        if compact:
+            player_name = get_short_player_name(player)
+        else:
+            player_name = get_player_name(player)
 
-        if team_id and team_id in next_matches:
-            next_match_text = next_matches[team_id]
+        # Logo und Name stehen in derselben Spalte
+        player_html = (
+            f"{logo_html(club_logo, club_label, 18)}"
+            f"<span class='squad-player-name'>"
+            f"{escape(player_name)}</span>"
+        )
 
         player_rows.append(
             {
-                "Spieler": build_player_label(
-                    player,
-                    team_names,
-                    compact=compact,
-                ),
+                "Spieler": player_name,
+                "_spieler_html": player_html,
                 "Position": position_name,
                 "Status": status,
-                "Nächste Spiele": next_match_text,
+                "Nächste Spiele": (
+                    build_next_matches_text(
+                        team_id,
+                        next_matches,
+                        teams,
+                    )
+                ),
+                "_naechste_html": (
+                    build_next_matches_html(
+                        team_id,
+                        next_matches,
+                        teams,
+                    )
+                ),
                 "Einstandspreis": get_buy_price(
                     player
                 ),
@@ -3165,8 +3437,6 @@ elif players:
             "Trend 24 Stunden",
         ]
 
-    player_frame = player_frame[player_columns]
-
     player_frame = sort_controls(
         player_frame,
         player_columns,
@@ -3175,18 +3445,10 @@ elif players:
         compact=compact,
     )
 
-    st.dataframe(
-        style_player_table(player_frame),
-        use_container_width=True,
-        hide_index=True,
-        height=table_height(
-            len(player_frame),
-            compact,
-        ),
-    )
+    render_squad_table(player_frame, player_columns)
 
     st.caption(
-        "Der Verein steht hinter dem Spielernamen. "
+        "Das Logo links vom Namen ist der eigene Verein. "
         "H bedeutet Heimspiel, A bedeutet Auswärtsspiel."
     )
 
@@ -3242,6 +3504,20 @@ with st.expander("Alle Daten zu einem Spieler"):
         )
 
         inspect_player = players[inspect_index]
+
+        st.write(
+            "Erkannte Vereins-ID: "
+            + str(get_team_id(inspect_player))
+        )
+
+        st.write(
+            "Erkanntes Logo: "
+            + str(
+                get_player_logo(inspect_player, teams)
+                or "nicht gefunden"
+            )
+        )
+
         squad_fields = flatten_fields(
             inspect_player
         )
@@ -3265,40 +3541,65 @@ with st.expander("Alle Daten zu einem Spieler"):
 # ---------------------------------------------------------
 
 if not compact:
-    with st.expander("Diagnose Spielplan und Vereine"):
+    with st.expander("Diagnose Vereine und Spielplan"):
         st.write(
-            f"Erkannte Vereine: {len(team_names)}"
+            f"Erkannte Vereine: {len(teams)}"
+        )
+
+        logo_count = sum(
+            1
+            for entry in teams.values()
+            if entry.get("logo")
         )
 
         st.write(
-            f"Vereine mit nächsten Spielen: "
+            f"Vereine mit Logo: {logo_count}"
+        )
+
+        st.write(
+            "Vereine mit nächsten Spielen: "
             f"{len(next_matches)}"
         )
 
-        if st.button("Spielplan neu laden"):
+        if st.button("Vereine und Spielplan neu laden"):
             st.session_state.pop(matches_key, None)
             st.rerun()
 
-        if team_names:
-            st.write("**Vereinsnamen:**")
-            st.json(team_names)
+        if teams:
+            st.write("**Erkannte Vereine:**")
+            st.json(teams)
+        else:
+            st.write(
+                "Es wurden keine Vereine erkannt. "
+                "Bitte die Rohdaten unten prüfen."
+            )
 
         if next_matches:
             st.write("**Nächste Spiele je Verein:**")
             st.json(next_matches)
-        else:
-            st.write(
-                "Es wurde kein Spielplan erkannt. "
-                "Bitte die Rohdaten unten prüfen."
-            )
+
+        if matches_info["competition_sources"]:
+            st.write("**Wettbewerbsdaten:**")
+
+            for source in matches_info[
+                "competition_sources"
+            ]:
+                with st.expander(source["path"]):
+                    st.json(source["data"])
 
         if matches_info["match_sources"]:
+            st.write("**Spielplandaten:**")
+
             for source in matches_info["match_sources"]:
                 with st.expander(source["path"]):
                     st.json(source["data"])
 
+        if matches_info["competition_errors"]:
+            st.write("**Fehler Wettbewerb:**")
+            st.write(matches_info["competition_errors"])
+
         if matches_info["match_errors"]:
-            st.write("**Fehler:**")
+            st.write("**Fehler Spielplan:**")
             st.write(matches_info["match_errors"])
 
     with st.expander(
@@ -3367,43 +3668,6 @@ if not compact:
             st.success(
                 f"{len(manager_sources)} Endpunkte "
                 "haben geantwortet."
-            )
-
-            overview_rows = []
-
-            for source in manager_sources:
-                data = source["data"]
-
-                if isinstance(data, dict):
-                    content = ", ".join(
-                        sorted(data.keys())
-                    )
-                elif isinstance(data, list):
-                    content = (
-                        f"Liste mit {len(data)} "
-                        "Einträgen"
-                    )
-                else:
-                    content = type(data).__name__
-
-                overview_rows.append(
-                    {
-                        "Endpunkt": source["path"],
-                        "Enthaltene Felder": content,
-                    }
-                )
-
-            overview_frame = pd.DataFrame(
-                overview_rows
-            )
-
-            st.dataframe(
-                overview_frame,
-                use_container_width=True,
-                hide_index=True,
-                height=table_height(
-                    len(overview_frame)
-                ),
             )
 
             for source in manager_sources:
