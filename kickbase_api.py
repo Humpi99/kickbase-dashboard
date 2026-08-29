@@ -85,11 +85,7 @@ class KickbaseAPI:
         )
 
     def restore_session(self, token, own_user_id=None):
-        """
-        Stellt eine gespeicherte Token-Sitzung wieder her.
-
-        Das Passwort wird dafür nicht benötigt.
-        """
+        """Stellt eine gespeicherte Token-Sitzung wieder her."""
         if not token:
             raise ValueError("Es wurde kein Kickbase-Token übergeben.")
 
@@ -296,6 +292,34 @@ class KickbaseAPI:
             f"/v4/leagues/{league_id}/market",
             f"/v4/leagues/{league_id}/market/players",
             f"/v4/leagues/{league_id}/transfermarket",
+        ]
+
+        return self.try_paths(paths)
+
+    def get_matches(self, league_id):
+        """
+        Lädt mögliche Spielpläne der Bundesliga.
+
+        Es gibt keinen sicher bestätigten Endpunkt.
+        Deshalb werden mehrere Pfade probiert.
+        """
+        paths = [
+            "/v4/competitions/1/matches",
+            "/v4/competitions/1/matchdays",
+            "/v4/competitions/1/matchday",
+            f"/v4/leagues/{league_id}/matches",
+            f"/v4/leagues/{league_id}/matchdays",
+            "/v4/matches",
+        ]
+
+        return self.try_paths(paths)
+
+    def get_teams(self):
+        """Lädt mögliche Vereinslisten der Bundesliga."""
+        paths = [
+            "/v4/competitions/1/teams",
+            "/v4/competitions/1",
+            "/v4/teams",
         ]
 
         return self.try_paths(paths)
