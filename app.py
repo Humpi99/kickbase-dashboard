@@ -1055,6 +1055,21 @@ def is_in_lineup(player):
     )
 
 
+def get_lineup_matchday_value(
+    stats,
+    days_to_matchday,
+):
+    """
+    Berechnet den voraussichtlichen S11-Marktwert
+    am Spieltag.
+    """
+    return (
+        stats["lineup_value"]
+        + stats["trend_lineup"]
+        * days_to_matchday
+    )
+
+
 # ---------------------------------------------------------
 # Spieltag
 # ---------------------------------------------------------
@@ -2435,6 +2450,7 @@ def style_league_table(
             "Start 11",
             "Trading",
             "Kaderwert",
+            "S11 Spieltag",
         ]
         if column in frame.columns
     ]
@@ -3324,7 +3340,7 @@ days_to_matchday = (
         key=days_widget_key,
         help=(
             "Dieser Wert wird für die "
-            "Budgetprognose verwendet."
+            "Budget- und S11-Prognose verwendet."
         ),
     )
 )
@@ -3560,7 +3576,7 @@ if st.sidebar.button(
     )
 
     st.session_state.pop(
-        f"league_rows_v10_{league_id}",
+        f"league_rows_v11_{league_id}",
         None,
     )
 
@@ -3696,7 +3712,7 @@ if view == "Liga":
         )
 
     cache_key = (
-        f"league_rows_v10_{league_id}"
+        f"league_rows_v11_{league_id}"
     )
 
     if st.button(
@@ -3745,6 +3761,13 @@ if view == "Liga":
             manager_stats = (
                 compute_stats(
                     manager_players
+                )
+            )
+
+            manager_lineup_matchday_value = (
+                get_lineup_matchday_value(
+                    manager_stats,
+                    days_to_matchday,
                 )
             )
 
@@ -3809,6 +3832,9 @@ if view == "Liga":
                         manager_stats[
                             "trend_total"
                         ]
+                    ),
+                    "S11 Spieltag": (
+                        manager_lineup_matchday_value
                     ),
                 }
             )
@@ -3883,6 +3909,8 @@ if view == "Liga":
             "Gewinn gesamt",
             "Trend gesamt",
             "Kontostand",
+            "Am Spieltag",
+            "S11 Spieltag",
         ]
     else:
         visible_columns = [
@@ -3898,6 +3926,7 @@ if view == "Liga":
             "Kontostand",
             "Nach Verkauf",
             "Am Spieltag",
+            "S11 Spieltag",
         ]
 
     sortable_frame = (
@@ -3991,6 +4020,14 @@ if view == "Liga":
         "Wenn die Startelf nicht genau 11 Spieler "
         "enthält, wird ihre Anzahl in Klammern "
         "ergänzt und rot markiert."
+    )
+
+    st.caption(
+        "S11 Spieltag zeigt den voraussichtlichen "
+        "Marktwert der aktuellen Startelf am nächsten "
+        "Spieltag. Berechnet wird der aktuelle "
+        "Startelf-Marktwert zuzüglich des täglichen "
+        "Startelf-Trends bis zum Spieltag."
     )
 
     if own_budget is not None:
@@ -4206,6 +4243,13 @@ if players:
 
 stats = compute_stats(players)
 
+lineup_matchday_value = (
+    get_lineup_matchday_value(
+        stats,
+        days_to_matchday,
+    )
+)
+
 total_profit = (
     stats["profit_in_club"]
 )
@@ -4262,6 +4306,12 @@ with st.expander(
                     ]
                 ),
                 [
+                    (
+                        "Am Spieltag: "
+                        + format_currency(
+                            lineup_matchday_value
+                        )
+                    ),
                     (
                         "Einstand: "
                         + format_currency(
