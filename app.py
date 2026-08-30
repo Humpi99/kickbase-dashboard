@@ -5,6 +5,8 @@ Ansichten:
 - Manager
 - Liga
 - Transfermarkt
+
+Optimiert für Desktop und Handy.
 """
 
 from datetime import datetime, timezone
@@ -114,11 +116,14 @@ def format_signed_currency(value):
 
 
 def table_height(row_count, compact=False):
-    """Berechnet die Höhe einer Streamlit-Tabelle."""
+    """Berechnet die Tabellenhöhe."""
     row_height = 30 if compact else 35
     header_height = 34 if compact else 38
 
-    return int(header_height + row_count * row_height)
+    return int(
+        header_height
+        + row_count * row_height
+    )
 
 
 def sort_controls(
@@ -139,7 +144,9 @@ def sort_controls(
         return frame.reset_index(drop=True)
 
     if default_column in available:
-        default_index = available.index(default_column)
+        default_index = available.index(
+            default_column
+        )
     else:
         default_index = 0
 
@@ -169,6 +176,77 @@ def sort_controls(
     ).reset_index(drop=True)
 
 
+def flatten_fields(
+    value,
+    prefix="",
+    depth=0,
+):
+    """Wandelt verschachtelte Daten in eine Tabelle um."""
+    rows = []
+
+    if depth > 4:
+        return rows
+
+    if isinstance(value, dict):
+        for key, nested_value in value.items():
+            path = f"{prefix}{key}"
+
+            if isinstance(
+                nested_value,
+                (dict, list),
+            ):
+                rows.extend(
+                    flatten_fields(
+                        nested_value,
+                        f"{path}.",
+                        depth + 1,
+                    )
+                )
+            else:
+                number = to_number(
+                    nested_value
+                )
+
+                rows.append(
+                    {
+                        "Feld": path,
+                        "Wert": repr(
+                            nested_value
+                        ),
+                        "Als Betrag": (
+                            format_currency(number)
+                            if (
+                                number is not None
+                                and abs(number) >= 1000
+                            )
+                            else ""
+                        ),
+                    }
+                )
+
+    elif isinstance(value, list):
+        rows.append(
+            {
+                "Feld": f"{prefix}[Liste]",
+                "Wert": (
+                    f"{len(value)} Einträge"
+                ),
+                "Als Betrag": "",
+            }
+        )
+
+        if value:
+            rows.extend(
+                flatten_fields(
+                    value[0],
+                    f"{prefix}0.",
+                    depth + 1,
+                )
+            )
+
+    return rows
+
+
 # ---------------------------------------------------------
 # Namen und IDs
 # ---------------------------------------------------------
@@ -181,7 +259,10 @@ def get_league_id(league):
         "",
     )
 
-    return str(value) if value is not None else ""
+    if value is None:
+        return ""
+
+    return str(value)
 
 
 def get_league_name(league):
@@ -189,7 +270,12 @@ def get_league_name(league):
     return str(
         first_value(
             league,
-            ["name", "n", "leagueName", "ln"],
+            [
+                "name",
+                "n",
+                "leagueName",
+                "ln",
+            ],
             "Unbekannte Liga",
         )
     )
@@ -199,11 +285,20 @@ def get_manager_id(manager):
     """Ermittelt die Manager-ID."""
     value = first_value(
         manager,
-        ["id", "i", "userId", "uid", "ui"],
+        [
+            "id",
+            "i",
+            "userId",
+            "uid",
+            "ui",
+        ],
         "",
     )
 
-    return str(value) if value is not None else ""
+    if value is None:
+        return ""
+
+    return str(value)
 
 
 def get_manager_name(manager):
@@ -229,34 +324,59 @@ def get_player_id(player):
     """Ermittelt die Spieler-ID."""
     value = first_value(
         player,
-        ["id", "i", "playerId", "pi", "pid"],
+        [
+            "id",
+            "i",
+            "playerId",
+            "pi",
+            "pid",
+        ],
     )
 
-    return str(value) if value is not None else None
+    if value is None:
+        return None
+
+    return str(value)
 
 
 def get_player_name(player):
     """Ermittelt den Spielernamen."""
     first_name = first_value(
         player,
-        ["firstName", "fn", "pfn"],
+        [
+            "firstName",
+            "fn",
+            "pfn",
+        ],
         "",
     )
 
     last_name = first_value(
         player,
-        ["lastName", "ln", "pln"],
+        [
+            "lastName",
+            "ln",
+            "pln",
+        ],
         "",
     )
 
-    combined = f"{first_name} {last_name}".strip()
+    combined = (
+        f"{first_name} {last_name}"
+        .strip()
+    )
 
     if combined:
         return combined
 
     single_name = first_value(
         player,
-        ["name", "n", "playerName", "pn"],
+        [
+            "name",
+            "n",
+            "playerName",
+            "pn",
+        ],
     )
 
     if single_name:
@@ -266,10 +386,14 @@ def get_player_name(player):
 
 
 def get_short_player_name(player):
-    """Gibt einen kürzeren Namen für die Handyansicht zurück."""
+    """Gibt einen kurzen Namen zurück."""
     last_name = first_value(
         player,
-        ["lastName", "ln", "pln"],
+        [
+            "lastName",
+            "ln",
+            "pln",
+        ],
     )
 
     if last_name:
@@ -299,26 +423,35 @@ def has_own_manager_marker(manager):
     for key in possible_keys:
         value = manager.get(key)
 
-        if value is True or value == 1 or value == "1":
+        if (
+            value is True
+            or value == 1
+            or value == "1"
+        ):
             return True
 
     return False
 
 
-def resolve_own_manager_id(api, managers):
-    """
-    Ermittelt die eigene Manager-ID.
-
-    Zuerst wird die Benutzer-ID aus der Anmeldung verwendet.
-    Falls sie fehlt, werden mögliche Manager-Markierungen geprüft.
-    """
-    own_user_id = getattr(api, "own_user_id", None)
+def resolve_own_manager_id(
+    api,
+    managers,
+):
+    """Ermittelt die ID des angemeldeten Managers."""
+    own_user_id = getattr(
+        api,
+        "own_user_id",
+        None,
+    )
 
     if own_user_id is not None:
         own_text = str(own_user_id)
 
         for manager in managers:
-            if get_manager_id(manager) == own_text:
+            if (
+                get_manager_id(manager)
+                == own_text
+            ):
                 return own_text
 
     for manager in managers:
@@ -328,8 +461,11 @@ def resolve_own_manager_id(api, managers):
     return None
 
 
-def order_managers_own_first(managers, own_manager_id):
-    """Sortiert den eigenen Manager an die erste Stelle."""
+def order_managers_own_first(
+    managers,
+    own_manager_id,
+):
+    """Setzt den eigenen Manager an die erste Stelle."""
     if not own_manager_id:
         return managers
 
@@ -337,22 +473,31 @@ def order_managers_own_first(managers, own_manager_id):
         managers,
         key=lambda manager: (
             0
-            if get_manager_id(manager) == str(own_manager_id)
+            if (
+                get_manager_id(manager)
+                == str(own_manager_id)
+            )
             else 1
         ),
     )
 
 
-def is_own_manager(own_manager_id, manager_id):
-    """Prüft, ob eine Manager-ID die eigene ist."""
+def is_own_manager(
+    own_manager_id,
+    manager_id,
+):
+    """Prüft, ob es der eigene Manager ist."""
     if not own_manager_id:
         return False
 
-    return str(own_manager_id) == str(manager_id)
+    return (
+        str(own_manager_id)
+        == str(manager_id)
+    )
 
 
 # ---------------------------------------------------------
-# Bilder und Vereinsdaten
+# Vereins- und Spielerbilder
 # ---------------------------------------------------------
 
 TEAM_ID_KEYS = [
@@ -414,16 +559,24 @@ def build_image_url(value):
     if not cleaned:
         return ""
 
-    if cleaned.startswith(("http://", "https://")):
+    if cleaned.startswith(
+        ("http://", "https://")
+    ):
         return cleaned
 
     if cleaned.startswith("//"):
         return f"https:{cleaned}"
 
-    return IMAGE_BASE_URL + cleaned.lstrip("/")
+    return (
+        IMAGE_BASE_URL
+        + cleaned.lstrip("/")
+    )
 
 
-def collect_dictionaries(data, depth=0):
+def collect_dictionaries(
+    data,
+    depth=0,
+):
     """Sammelt rekursiv alle Dictionaries."""
     found = []
 
@@ -435,13 +588,19 @@ def collect_dictionaries(data, depth=0):
 
         for value in data.values():
             found.extend(
-                collect_dictionaries(value, depth + 1)
+                collect_dictionaries(
+                    value,
+                    depth + 1,
+                )
             )
 
     elif isinstance(data, list):
         for item in data:
             found.extend(
-                collect_dictionaries(item, depth + 1)
+                collect_dictionaries(
+                    item,
+                    depth + 1,
+                )
             )
 
     return found
@@ -462,18 +621,29 @@ def looks_like_team(item):
         "pln",
     ]
 
-    if any(marker in item for marker in player_markers):
+    if any(
+        marker in item
+        for marker in player_markers
+    ):
         return False
 
     team_id = first_value(
         item,
-        ["id", "i", "tid", "teamId"],
+        [
+            "id",
+            "i",
+            "tid",
+            "teamId",
+        ],
     )
 
     if team_id is None:
         return False
 
-    if isinstance(team_id, (dict, list, bool)):
+    if isinstance(
+        team_id,
+        (dict, list, bool),
+    ):
         return False
 
     has_name = bool(
@@ -492,27 +662,37 @@ def looks_like_team(item):
     )
 
     has_image = bool(
-        first_text(item, TEAM_IMAGE_KEYS)
+        first_text(
+            item,
+            TEAM_IMAGE_KEYS,
+        )
     )
 
     return has_name or has_image
 
 
 def extract_team_info(sources):
-    """Erstellt die Vereinszuordnung mit Namen und Logos."""
+    """Erstellt eine Zuordnung von Vereinen und Logos."""
     teams = {}
 
     for source in sources:
         data = source.get("data")
 
-        for item in collect_dictionaries(data):
+        for item in collect_dictionaries(
+            data
+        ):
             if not looks_like_team(item):
                 continue
 
             team_id = str(
                 first_value(
                     item,
-                    ["id", "i", "tid", "teamId"],
+                    [
+                        "id",
+                        "i",
+                        "tid",
+                        "teamId",
+                    ],
                 )
             )
 
@@ -537,30 +717,53 @@ def extract_team_info(sources):
                 )
 
             if not entry["long_name"]:
-                entry["long_name"] = first_text(
-                    item,
-                    ["name", "n", "teamName", "tn"],
+                entry["long_name"] = (
+                    first_text(
+                        item,
+                        [
+                            "name",
+                            "n",
+                            "teamName",
+                            "tn",
+                        ],
+                    )
                 )
 
             if not entry["logo"]:
-                entry["logo"] = build_image_url(
-                    first_text(item, TEAM_IMAGE_KEYS)
+                entry["logo"] = (
+                    build_image_url(
+                        first_text(
+                            item,
+                            TEAM_IMAGE_KEYS,
+                        )
+                    )
                 )
 
     for source in sources:
         data = source.get("data")
 
-        for item in collect_dictionaries(data):
-            team_id = first_value(item, TEAM_ID_KEYS)
+        for item in collect_dictionaries(
+            data
+        ):
+            team_id = first_value(
+                item,
+                TEAM_ID_KEYS,
+            )
 
             if team_id is None:
                 continue
 
-            if isinstance(team_id, (dict, list, bool)):
+            if isinstance(
+                team_id,
+                (dict, list, bool),
+            ):
                 continue
 
             logo = build_image_url(
-                first_text(item, TEAM_IMAGE_KEYS)
+                first_text(
+                    item,
+                    TEAM_IMAGE_KEYS,
+                )
             )
 
             if not logo:
@@ -585,26 +788,36 @@ def extract_team_info(sources):
                 )
 
             if not entry["long_name"]:
-                entry["long_name"] = first_text(
-                    item,
-                    TEAM_NAME_KEYS,
+                entry["long_name"] = (
+                    first_text(
+                        item,
+                        TEAM_NAME_KEYS,
+                    )
                 )
 
     for entry in teams.values():
         if not entry["name"]:
-            entry["name"] = entry["long_name"]
+            entry["name"] = (
+                entry["long_name"]
+            )
 
     return teams
 
 
 def get_team_id(player):
     """Ermittelt die Vereins-ID eines Spielers."""
-    value = first_value(player, TEAM_ID_KEYS)
+    value = first_value(
+        player,
+        TEAM_ID_KEYS,
+    )
 
     if value is None:
         return None
 
-    if isinstance(value, (dict, list, bool)):
+    if isinstance(
+        value,
+        (dict, list, bool),
+    ):
         return None
 
     return str(value)
@@ -628,7 +841,7 @@ def get_team_name(team_id, teams):
 
 
 def get_team_logo(team_id, teams):
-    """Gibt das Vereinslogo zurück."""
+    """Gibt die Adresse des Vereinslogos zurück."""
     if not team_id:
         return ""
 
@@ -640,7 +853,10 @@ def get_team_logo(team_id, teams):
     return entry.get("logo", "")
 
 
-def get_club_label(player, teams=None):
+def get_club_label(
+    player,
+    teams=None,
+):
     """Ermittelt eine kurze Vereinsbezeichnung."""
     short_name = first_text(
         player,
@@ -661,7 +877,10 @@ def get_club_label(player, teams=None):
             ["name", "n"],
         )
 
-    if isinstance(club_name, str) and club_name.strip():
+    if (
+        isinstance(club_name, str)
+        and club_name.strip()
+    ):
         return club_name.strip()
 
     if teams:
@@ -673,10 +892,16 @@ def get_club_label(player, teams=None):
     return ""
 
 
-def get_player_club_logo(player, teams=None):
+def get_player_club_logo(
+    player,
+    teams=None,
+):
     """Ermittelt das Vereinslogo eines Spielers."""
     direct_logo = build_image_url(
-        first_text(player, TEAM_IMAGE_KEYS)
+        first_text(
+            player,
+            TEAM_IMAGE_KEYS,
+        )
     )
 
     if direct_logo:
@@ -692,9 +917,12 @@ def get_player_club_logo(player, teams=None):
 
 
 def get_player_photo(player):
-    """Ermittelt das Spielerbild."""
+    """Ermittelt das Bild eines Spielers."""
     return build_image_url(
-        first_text(player, PLAYER_IMAGE_KEYS)
+        first_text(
+            player,
+            PLAYER_IMAGE_KEYS,
+        )
     )
 
 
@@ -704,20 +932,21 @@ def image_html(
     size=TEAM_LOGO_SIZE,
     css_class="team-logo",
 ):
-    """Erstellt ein HTML-Bild."""
-    safe_label = escape(str(label or ""))
+    """Baut ein kleines HTML-Bild."""
+    safe_label = escape(
+        str(label or "")
+    )
 
     if not url:
         return safe_label
 
-    safe_url = escape(url)
-
     return (
-        f"<img src='{safe_url}' "
+        f"<img src='{escape(url)}' "
         f"alt='{safe_label}' "
         f"title='{safe_label}' "
         f"class='{css_class}' "
-        f"style='height:{size}px;width:{size}px;' />"
+        f"style='height:{size}px;"
+        f"width:{size}px;' />"
     )
 
 
@@ -751,41 +980,58 @@ LINEUP_FIELD = "lo"
 def get_market_value(player):
     """Liest den Marktwert."""
     return to_number(
-        first_value(player, MARKET_VALUE_KEYS)
+        first_value(
+            player,
+            MARKET_VALUE_KEYS,
+        )
     )
 
 
 def get_profit(player):
     """Liest den Marktwertgewinn."""
     return to_number(
-        first_value(player, PROFIT_KEYS)
+        first_value(
+            player,
+            PROFIT_KEYS,
+        )
     )
 
 
 def get_buy_price(player):
     """Berechnet den Einstandspreis."""
-    market_value = get_market_value(player)
+    market_value = get_market_value(
+        player
+    )
+
     profit = get_profit(player)
 
-    if market_value is None or profit is None:
+    if (
+        market_value is None
+        or profit is None
+    ):
         return None
 
     return market_value - profit
 
 
 def get_daily_change(player):
-    """Liest den 24-Stunden-Trend."""
+    """Liest den Trend der letzten 24 Stunden."""
     return to_number(
-        first_value(player, DAILY_CHANGE_KEYS)
+        first_value(
+            player,
+            DAILY_CHANGE_KEYS,
+        )
     )
 
 
 def get_lineup_slot(player):
-    """Liest einen Startelfplatz von 0 bis 10."""
+    """Liest einen gültigen Startelfplatz."""
     if not isinstance(player, dict):
         return None
 
-    value = player.get(LINEUP_FIELD)
+    value = player.get(
+        LINEUP_FIELD
+    )
 
     if value is None:
         return None
@@ -803,7 +1049,10 @@ def get_lineup_slot(player):
 
 def is_in_lineup(player):
     """Prüft, ob ein Spieler aufgestellt ist."""
-    return get_lineup_slot(player) is not None
+    return (
+        get_lineup_slot(player)
+        is not None
+    )
 
 
 # ---------------------------------------------------------
@@ -829,22 +1078,32 @@ def parse_date_text(text):
     if len(text) < 8:
         return None
 
-    cleaned = text.replace("Z", "+00:00")
+    cleaned = text.replace(
+        "Z",
+        "+00:00",
+    )
 
     try:
-        parsed = datetime.fromisoformat(cleaned)
+        parsed = datetime.fromisoformat(
+            cleaned
+        )
     except ValueError:
         return None
 
     if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=timezone.utc)
+        parsed = parsed.replace(
+            tzinfo=timezone.utc
+        )
 
     return parsed
 
 
 def parse_any_date(value):
     """Liest ein Datum aus Text oder Zeitstempel."""
-    if value is None or isinstance(value, bool):
+    if (
+        value is None
+        or isinstance(value, bool)
+    ):
         return None
 
     if isinstance(value, str):
@@ -874,21 +1133,31 @@ def parse_any_date(value):
     return None
 
 
-def collect_future_dates(data, depth=0):
-    """Sammelt zukünftige Datumswerte."""
+def collect_future_dates(
+    data,
+    depth=0,
+):
+    """Sammelt passende zukünftige Datumswerte."""
     found = []
 
     if depth > 6:
         return found
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(
+        timezone.utc
+    )
 
     if isinstance(data, dict):
         for key, value in data.items():
             if key in MATCHDAY_DATE_KEYS:
-                parsed = parse_any_date(value)
+                parsed = parse_any_date(
+                    value
+                )
 
-                if parsed is not None and parsed > now:
+                if (
+                    parsed is not None
+                    and parsed > now
+                ):
                     found.append(parsed)
 
             found.extend(
@@ -910,18 +1179,32 @@ def collect_future_dates(data, depth=0):
     return found
 
 
-def find_days_to_matchday(api, league_id):
+def find_days_to_matchday(
+    api,
+    league_id,
+):
     """Sucht die verbleibenden Tage bis zum Spieltag."""
     paths = [
-        f"/v4/leagues/{league_id}/matchdays",
-        f"/v4/leagues/{league_id}/matchday",
+        (
+            f"/v4/leagues/"
+            f"{league_id}/matchdays"
+        ),
+        (
+            f"/v4/leagues/"
+            f"{league_id}/matchday"
+        ),
         "/v4/competitions/1/matchdays",
         "/v4/competitions/1/matchday",
         "/v4/matchdays",
-        f"/v4/leagues/{league_id}/season",
+        (
+            f"/v4/leagues/"
+            f"{league_id}/season"
+        ),
     ]
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(
+        timezone.utc
+    )
 
     for path in paths:
         try:
@@ -929,7 +1212,9 @@ def find_days_to_matchday(api, league_id):
         except Exception:
             continue
 
-        dates = collect_future_dates(data)
+        dates = collect_future_dates(
+            data
+        )
 
         if not dates:
             continue
@@ -1006,16 +1291,23 @@ MATCH_DATE_KEYS = [
 ]
 
 
-def extract_matches(match_sources):
+def extract_matches(
+    match_sources
+):
     """Sammelt kommende Spiele."""
     matches = []
     seen = set()
-    now = datetime.now(timezone.utc)
+
+    now = datetime.now(
+        timezone.utc
+    )
 
     for source in match_sources:
         data = source.get("data")
 
-        for item in collect_dictionaries(data):
+        for item in collect_dictionaries(
+            data
+        ):
             home_id = first_value(
                 item,
                 HOME_TEAM_KEYS,
@@ -1026,7 +1318,10 @@ def extract_matches(match_sources):
                 AWAY_TEAM_KEYS,
             )
 
-            if home_id is None or away_id is None:
+            if (
+                home_id is None
+                or away_id is None
+            ):
                 continue
 
             if isinstance(
@@ -1051,10 +1346,10 @@ def extract_matches(match_sources):
                 if match_date is not None:
                     break
 
-            if match_date is None:
-                continue
-
-            if match_date < now:
+            if (
+                match_date is None
+                or match_date < now
+            ):
                 continue
 
             signature = (
@@ -1070,18 +1365,26 @@ def extract_matches(match_sources):
 
             matches.append(
                 {
-                    "home_id": str(home_id),
-                    "away_id": str(away_id),
-                    "home_logo": build_image_url(
-                        first_text(
-                            item,
-                            HOME_IMAGE_KEYS,
+                    "home_id": str(
+                        home_id
+                    ),
+                    "away_id": str(
+                        away_id
+                    ),
+                    "home_logo": (
+                        build_image_url(
+                            first_text(
+                                item,
+                                HOME_IMAGE_KEYS,
+                            )
                         )
                     ),
-                    "away_logo": build_image_url(
-                        first_text(
-                            item,
-                            AWAY_IMAGE_KEYS,
+                    "away_logo": (
+                        build_image_url(
+                            first_text(
+                                item,
+                                AWAY_IMAGE_KEYS,
+                            )
                         )
                     ),
                     "home_name": first_text(
@@ -1099,7 +1402,10 @@ def extract_matches(match_sources):
     return matches
 
 
-def build_next_matches(matches, count=2):
+def build_next_matches(
+    matches,
+    count=2,
+):
     """Baut je Verein die nächsten Spiele."""
     by_team = {}
 
@@ -1112,8 +1418,9 @@ def build_next_matches(matches, count=2):
         home_id = match["home_id"]
         away_id = match["away_id"]
 
-        date_text = match["date"].strftime(
-            "%d.%m."
+        date_text = (
+            match["date"]
+            .strftime("%d.%m.")
         )
 
         by_team.setdefault(
@@ -1122,8 +1429,12 @@ def build_next_matches(matches, count=2):
         ).append(
             {
                 "opponent_id": away_id,
-                "opponent_logo": match["away_logo"],
-                "opponent_name": match["away_name"],
+                "opponent_logo": (
+                    match["away_logo"]
+                ),
+                "opponent_name": (
+                    match["away_name"]
+                ),
                 "place": "H",
                 "date": date_text,
             }
@@ -1135,8 +1446,12 @@ def build_next_matches(matches, count=2):
         ).append(
             {
                 "opponent_id": home_id,
-                "opponent_logo": match["home_logo"],
-                "opponent_name": match["home_name"],
+                "opponent_logo": (
+                    match["home_logo"]
+                ),
+                "opponent_name": (
+                    match["home_name"]
+                ),
                 "place": "A",
                 "date": date_text,
             }
@@ -1144,11 +1459,15 @@ def build_next_matches(matches, count=2):
 
     return {
         team_id: entries[:count]
-        for team_id, entries in by_team.items()
+        for team_id, entries
+        in by_team.items()
     }
 
 
-def load_team_and_match_data(api, league_id):
+def load_team_and_match_data(
+    api,
+    league_id,
+):
     """Lädt Vereinsdaten und Spielplan."""
     try:
         competition_sources, _ = (
@@ -1158,13 +1477,15 @@ def load_team_and_match_data(api, league_id):
         competition_sources = []
 
     try:
-        team_sources, _ = api.get_teams()
+        team_sources, _ = (
+            api.get_teams()
+        )
     except Exception:
         team_sources = []
 
     try:
-        match_sources, _ = api.get_matches(
-            league_id
+        match_sources, _ = (
+            api.get_matches(league_id)
         )
     except Exception:
         match_sources = []
@@ -1175,13 +1496,26 @@ def load_team_and_match_data(api, league_id):
         + match_sources
     )
 
-    teams = extract_team_info(all_sources)
-    matches = extract_matches(match_sources)
-    next_matches = build_next_matches(matches)
+    teams = extract_team_info(
+        all_sources
+    )
+
+    matches = extract_matches(
+        match_sources
+    )
+
+    next_matches = build_next_matches(
+        matches
+    )
 
     return {
         "teams": teams,
         "next_matches": next_matches,
+        "competition_sources": (
+            competition_sources
+        ),
+        "team_sources": team_sources,
+        "match_sources": match_sources,
     }
 
 
@@ -1203,30 +1537,42 @@ def build_next_matches_html(
     parts = []
 
     for entry in entries:
-        opponent_id = entry["opponent_id"]
+        opponent_id = (
+            entry["opponent_id"]
+        )
 
         opponent_logo = (
             entry.get("opponent_logo")
-            or get_team_logo(opponent_id, teams)
+            or get_team_logo(
+                opponent_id,
+                teams,
+            )
         )
 
         opponent_name = (
             entry.get("opponent_name")
-            or get_team_name(opponent_id, teams)
+            or get_team_name(
+                opponent_id,
+                teams,
+            )
             or "Gegner"
+        )
+
+        logo_html = image_html(
+            opponent_logo,
+            opponent_name,
+            logo_size,
         )
 
         parts.append(
             "<span class='match-entry'>"
-            f"<span class='match-place'>"
-            f"{entry['place']}</span>"
-            f"{image_html(
-                opponent_logo,
-                opponent_name,
-                logo_size,
-            )}"
-            f"<span class='match-date'>"
-            f"{entry['date']}</span>"
+            "<span class='match-place'>"
+            f"{entry['place']}"
+            "</span>"
+            f"{logo_html}"
+            "<span class='match-date'>"
+            f"{entry['date']}"
+            "</span>"
             "</span>"
         )
 
@@ -1339,11 +1685,14 @@ def looks_like_manager(item):
     )
 
 
-def looks_like_player_with_value(item):
+def looks_like_player_with_value(
+    item
+):
     """Prüft, ob ein Objekt ein Spieler sein könnte."""
     return (
         isinstance(item, dict)
-        and get_market_value(item) is not None
+        and get_market_value(item)
+        is not None
     )
 
 
@@ -1391,7 +1740,9 @@ def find_list(
                 if result:
                     return result
 
-        for key, nested_value in value.items():
+        for key, nested_value in (
+            value.items()
+        ):
             if key in [
                 "tkn",
                 "token",
@@ -1417,7 +1768,12 @@ def find_leagues(value):
     return find_list(
         value,
         looks_like_league,
-        ["leagues", "lgs", "ls", "srvl"],
+        [
+            "leagues",
+            "lgs",
+            "ls",
+            "srvl",
+        ],
     )
 
 
@@ -1458,7 +1814,10 @@ def find_players_with_value(value):
 # Transferdaten
 # ---------------------------------------------------------
 
-def extract_transfer_events(data, depth=0):
+def extract_transfer_events(
+    data,
+    depth=0,
+):
     """Sammelt mögliche Transferereignisse."""
     events = []
 
@@ -1481,7 +1840,12 @@ def extract_transfer_events(data, depth=0):
 
     player_id = first_value(
         data,
-        ["pi", "playerId", "pid", "plid"],
+        [
+            "pi",
+            "playerId",
+            "pid",
+            "plid",
+        ],
     )
 
     amount = to_number(
@@ -1499,12 +1863,20 @@ def extract_transfer_events(data, depth=0):
 
     buyer = first_value(
         data,
-        ["byr", "buyerId", "bid"],
+        [
+            "byr",
+            "buyerId",
+            "bid",
+        ],
     )
 
     seller = first_value(
         data,
-        ["slr", "sellerId", "sid"],
+        [
+            "slr",
+            "sellerId",
+            "sid",
+        ],
     )
 
     if (
@@ -1517,7 +1889,9 @@ def extract_transfer_events(data, depth=0):
     ):
         events.append(
             {
-                "player_id": str(player_id),
+                "player_id": str(
+                    player_id
+                ),
                 "amount": amount,
                 "buyer": (
                     str(buyer)
@@ -1529,7 +1903,9 @@ def extract_transfer_events(data, depth=0):
                     if seller is not None
                     else None
                 ),
-                "name": get_player_name(data),
+                "name": get_player_name(
+                    data
+                ),
             }
         )
 
@@ -1551,11 +1927,14 @@ def load_feed_transfers(
 ):
     """Berechnet realisierte Gewinne aus Transfers."""
     events = []
+    raw_samples = []
 
     try:
-        sources, _ = api.get_manager_transfers(
-            league_id,
-            manager_id,
+        sources, _ = (
+            api.get_manager_transfers(
+                league_id,
+                manager_id,
+            )
         )
 
         for source in sources:
@@ -1564,14 +1943,21 @@ def load_feed_transfers(
                     source["data"]
                 )
             )
+
+            if len(raw_samples) < 1:
+                raw_samples.append(
+                    source["data"]
+                )
     except Exception:
         pass
 
     for start in range(0, 400, 25):
         try:
-            sources, _ = api.get_league_feed(
-                league_id,
-                start,
+            sources, _ = (
+                api.get_league_feed(
+                    league_id,
+                    start,
+                )
             )
         except Exception:
             break
@@ -1585,6 +1971,14 @@ def load_feed_transfers(
                 )
             )
 
+            if (
+                start == 0
+                and len(raw_samples) < 2
+            ):
+                raw_samples.append(
+                    source["data"]
+                )
+
         if not page_events:
             break
 
@@ -1595,27 +1989,43 @@ def load_feed_transfers(
     names = {}
 
     for event in events:
-        player_id = event["player_id"]
+        player_id = (
+            event["player_id"]
+        )
 
         if event["name"] != "Unbekannt":
-            names[player_id] = event["name"]
+            names[player_id] = (
+                event["name"]
+            )
 
-        if event["buyer"] == str(manager_id):
+        if (
+            event["buyer"]
+            == str(manager_id)
+        ):
             purchases.setdefault(
                 player_id,
                 [],
-            ).append(event["amount"])
+            ).append(
+                event["amount"]
+            )
 
-        if event["seller"] == str(manager_id):
+        if (
+            event["seller"]
+            == str(manager_id)
+        ):
             sales.setdefault(
                 player_id,
                 [],
-            ).append(event["amount"])
+            ).append(
+                event["amount"]
+            )
 
     realized = 0.0
     trades = []
 
-    for player_id, sale_prices in sales.items():
+    for player_id, sale_prices in (
+        sales.items()
+    ):
         buy_prices = purchases.get(
             player_id,
             [],
@@ -1625,13 +2035,20 @@ def load_feed_transfers(
             sale_prices
         ):
             if index < len(buy_prices):
-                buy_price = buy_prices[index]
+                buy_price = (
+                    buy_prices[index]
+                )
+
                 known_price = True
             else:
                 buy_price = 0.0
                 known_price = False
 
-            profit = sale_price - buy_price
+            profit = (
+                sale_price
+                - buy_price
+            )
+
             realized += profit
 
             trades.append(
@@ -1645,20 +2062,26 @@ def load_feed_transfers(
                         if known_price
                         else None
                     ),
-                    "Verkaufspreis": sale_price,
+                    "Verkaufspreis": (
+                        sale_price
+                    ),
                     "Gewinn": profit,
                 }
             )
 
-    return realized, trades
+    return (
+        realized,
+        trades,
+        raw_samples,
+    )
 
 
 # ---------------------------------------------------------
-# Kennzahlen und Budgets
+# Kennzahlen und Budget
 # ---------------------------------------------------------
 
 def compute_stats(players):
-    """Berechnet die Manager-Kennzahlen."""
+    """Berechnet alle Kennzahlen einer Spielerliste."""
     stats = {
         "squad_value": 0.0,
         "lineup_value": 0.0,
@@ -1691,22 +2114,55 @@ def compute_stats(players):
             or 0.0
         )
 
-        profit = get_profit(player) or 0.0
+        profit = (
+            get_profit(player)
+            or 0.0
+        )
 
-        stats["squad_value"] += market_value
-        stats["buy_total"] += buy_price
-        stats["profit_in_club"] += profit
-        stats["trend_total"] += daily_change
+        stats["squad_value"] += (
+            market_value
+        )
+
+        stats["buy_total"] += (
+            buy_price
+        )
+
+        stats["profit_in_club"] += (
+            profit
+        )
+
+        stats["trend_total"] += (
+            daily_change
+        )
 
         if is_in_lineup(player):
-            stats["lineup_value"] += market_value
-            stats["buy_lineup"] += buy_price
-            stats["trend_lineup"] += daily_change
+            stats["lineup_value"] += (
+                market_value
+            )
+
+            stats["buy_lineup"] += (
+                buy_price
+            )
+
+            stats["trend_lineup"] += (
+                daily_change
+            )
+
             stats["lineup_count"] += 1
+
         else:
-            stats["trading_value"] += market_value
-            stats["buy_trading"] += buy_price
-            stats["trend_trading"] += daily_change
+            stats["trading_value"] += (
+                market_value
+            )
+
+            stats["buy_trading"] += (
+                buy_price
+            )
+
+            stats["trend_trading"] += (
+                daily_change
+            )
+
             stats["trading_count"] += 1
 
     return stats
@@ -1722,7 +2178,6 @@ def compute_budget(
     """Berechnet die Budgetwerte."""
     if real_balance is not None:
         balance = real_balance
-        is_real = True
     else:
         balance = (
             BASE_BUDGET
@@ -1730,8 +2185,6 @@ def compute_budget(
             + total_profit
             - stats["squad_value"]
         )
-
-        is_real = False
 
     after_sale = (
         balance
@@ -1748,7 +2201,6 @@ def compute_budget(
         "balance": balance,
         "after_sale": after_sale,
         "at_matchday": at_matchday,
-        "is_real": is_real,
     }
 
 
@@ -1759,17 +2211,18 @@ def load_manager_players(
 ):
     """Lädt den Kader eines Managers."""
     try:
-        squad_result = api.get_manager_squad(
-            league_id,
-            manager_id,
+        squad_result = (
+            api.get_manager_squad(
+                league_id,
+                manager_id,
+            )
         )
 
-        return (
-            find_players_with_value(
-                squad_result
-            ),
-            None,
+        players = find_players_with_value(
+            squad_result
         )
+
+        return players, None
 
     except Exception as error:
         return [], str(error)
@@ -1782,9 +2235,11 @@ def load_realized_profit(
 ):
     """Lädt den realisierten Gewinn."""
     try:
-        value, _ = api.get_realized_profit(
-            league_id,
-            manager_id,
+        value, _ = (
+            api.get_realized_profit(
+                league_id,
+                manager_id,
+            )
         )
 
         return value
@@ -1792,10 +2247,18 @@ def load_realized_profit(
         return None
 
 
-def load_real_budget(api, league_id):
-    """Lädt den echten eigenen Kontostand."""
+def load_real_budget(
+    api,
+    league_id,
+):
+    """Lädt den eigenen Kontostand."""
     try:
-        value, _ = api.get_budget(league_id)
+        value, _ = (
+            api.get_budget(
+                league_id
+            )
+        )
+
         return value
     except Exception:
         return None
@@ -1836,17 +2299,28 @@ def compute_own_bonus(
         + (realized or 0.0)
     )
 
-    plain = (
+    plain_balance = (
         BASE_BUDGET
         + total_profit
         - stats["squad_value"]
     )
 
-    return real_balance - plain
+    return {
+        "plain": plain_balance,
+        "real": real_balance,
+        "bonus": (
+            real_balance
+            - plain_balance
+        ),
+        "profit": total_profit,
+        "squad_value": (
+            stats["squad_value"]
+        ),
+    }
 
 
 # ---------------------------------------------------------
-# Liga-Tabelle
+# Tabellenformatierung
 # ---------------------------------------------------------
 
 def build_squad_label(
@@ -1854,8 +2328,13 @@ def build_squad_label(
     lineup_count,
 ):
     """Baut die Anzeige der Kadergröße."""
-    total = to_number(player_count)
-    lineup = to_number(lineup_count)
+    total = to_number(
+        player_count
+    )
+
+    lineup = to_number(
+        lineup_count
+    )
 
     if total is None:
         return "—"
@@ -1865,7 +2344,10 @@ def build_squad_label(
     if lineup is None:
         return total_text
 
-    if int(lineup) == REQUIRED_LINEUP_SIZE:
+    if (
+        int(lineup)
+        == REQUIRED_LINEUP_SIZE
+    ):
         return total_text
 
     return (
@@ -1881,14 +2363,19 @@ def currency_formatter(value):
 
 def signed_formatter(value):
     """Formatiert Tabellenbeträge mit Vorzeichen."""
-    return format_signed_currency(value)
+    return format_signed_currency(
+        value
+    )
 
 
 def color_by_value(value):
     """Färbt positive und negative Zahlen."""
     number = to_number(value)
 
-    if number is None or number == 0:
+    if (
+        number is None
+        or number == 0
+    ):
         return ""
 
     if number > 0:
@@ -1903,7 +2390,10 @@ def color_by_value(value):
     )
 
 
-def apply_value_colors(styled, columns):
+def apply_value_colors(
+    styled,
+    columns,
+):
     """Färbt Zahlen mit Pandas Styler."""
     if not columns:
         return styled
@@ -1963,7 +2453,9 @@ def style_league_table(
             styles = []
 
             for count in lineup_counts:
-                number = to_number(count)
+                number = to_number(
+                    count
+                )
 
                 if (
                     number is None
@@ -1987,10 +2479,14 @@ def style_league_table(
     formats = {}
 
     for column in currency_columns:
-        formats[column] = currency_formatter
+        formats[column] = (
+            currency_formatter
+        )
 
     for column in signed_columns:
-        formats[column] = signed_formatter
+        formats[column] = (
+            signed_formatter
+        )
 
     return styled.format(formats)
 
@@ -2006,18 +2502,22 @@ def style_trades_table(frame):
         {
             "Kaufpreis": lambda value: (
                 "Zulosung"
-                if value is None
-                or pd.isna(value)
+                if (
+                    value is None
+                    or pd.isna(value)
+                )
                 else format_currency(value)
             ),
-            "Verkaufspreis": currency_formatter,
+            "Verkaufspreis": (
+                currency_formatter
+            ),
             "Gewinn": signed_formatter,
         }
     )
 
 
 # ---------------------------------------------------------
-# HTML-Kadertabelle
+# Kadertabelle als HTML
 # ---------------------------------------------------------
 
 SQUAD_STYLE = """
@@ -2177,9 +2677,14 @@ SQUAD_STYLE = """
 def signed_cell_html(value):
     """Baut eine gefärbte HTML-Zelle."""
     number = to_number(value)
-    text = format_signed_currency(value)
+    text = format_signed_currency(
+        value
+    )
 
-    if number is None or number == 0:
+    if (
+        number is None
+        or number == 0
+    ):
         return text
 
     css_class = (
@@ -2190,7 +2695,8 @@ def signed_cell_html(value):
 
     return (
         f"<span class='{css_class}'>"
-        f"{text}</span>"
+        f"{text}"
+        "</span>"
     )
 
 
@@ -2210,7 +2716,8 @@ def render_squad_table(
     for _, row in frame.iterrows():
         row_class = (
             "trading"
-            if row.get("Status") == "Trading"
+            if row.get("Status")
+            == "Trading"
             else ""
         )
 
@@ -2228,7 +2735,9 @@ def render_squad_table(
 
             elif column == "Nächste Spiele":
                 cells.append(
-                    f"<td>{row['_naechste_html']}</td>"
+                    "<td>"
+                    f"{row['_naechste_html']}"
+                    "</td>"
                 )
 
             elif column in [
@@ -2236,9 +2745,9 @@ def render_squad_table(
                 "Marktwert",
             ]:
                 cells.append(
-                    f"<td>"
+                    "<td>"
                     f"{format_currency(row[column])}"
-                    f"</td>"
+                    "</td>"
                 )
 
             elif column in [
@@ -2246,16 +2755,16 @@ def render_squad_table(
                 "Trend 24 Stunden",
             ]:
                 cells.append(
-                    f"<td>"
+                    "<td>"
                     f"{signed_cell_html(row[column])}"
-                    f"</td>"
+                    "</td>"
                 )
 
             else:
                 cells.append(
-                    f"<td>"
+                    "<td>"
                     f"{escape(str(row[column]))}"
-                    f"</td>"
+                    "</td>"
                 )
 
         row_attribute = (
@@ -2267,7 +2776,7 @@ def render_squad_table(
         body_rows.append(
             f"<tr{row_attribute}>"
             f"{''.join(cells)}"
-            f"</tr>"
+            "</tr>"
         )
 
     table_class = (
@@ -2300,14 +2809,18 @@ def kpi_block(
     entries,
     compact=False,
 ):
-    """Zeigt einen KPI-Block."""
+    """Zeigt einen KPI-Block mit Zusatzinformationen."""
     colors = {
         "neutral": COLOR_NEUTRAL,
         "plus": COLOR_POSITIVE,
         "minus": COLOR_NEGATIVE,
     }
 
-    value_size = 19 if compact else 24
+    value_size = (
+        19
+        if compact
+        else 24
+    )
 
     st.markdown(
         f"<div class='kpi-title' "
@@ -2326,50 +2839,79 @@ def kpi_block(
         unsafe_allow_html=True,
     )
 
-    columns = st.columns(len(entries))
+    columns = st.columns(
+        len(entries)
+    )
 
     for column, entry in zip(
         columns,
         entries,
     ):
-        label, value, tone = entry
+        label, value, notes, tone = (
+            entry
+        )
 
         color = colors.get(
             tone,
             COLOR_NEUTRAL,
         )
 
+        notes_html = ""
+
+        for note in notes:
+            if not note:
+                continue
+
+            notes_html += (
+                "<div class='kpi-note' "
+                f"style='"
+                f"font-size:12px;"
+                f"color:{COLOR_LABEL};"
+                f"line-height:1.5;"
+                f"'>"
+                f"{escape(str(note))}"
+                "</div>"
+            )
+
         column.markdown(
-            f"<div class='kpi-card' "
-            f"style='padding:6px 0 2px 0;'>"
-            f"<div style='"
-            f"font-size:12px;"
+            "<div class='kpi-card' "
+            "style='padding:6px 0 2px 0;'>"
+            "<div style='"
+            "font-size:12px;"
             f"color:{COLOR_LABEL};"
-            f"'>"
+            "'>"
             f"{label}"
-            f"</div>"
-            f"<div class='kpi-value' "
-            f"style='"
+            "</div>"
+            "<div class='kpi-value' "
+            "style='"
             f"font-size:{value_size}px;"
-            f"font-weight:700;"
+            "font-weight:700;"
             f"color:{color};"
-            f"padding:2px 0 4px 0;"
-            f"'>"
+            "padding:2px 0 4px 0;"
+            "'>"
             f"{value}"
-            f"</div>"
-            f"</div>",
+            "</div>"
+            f"{notes_html}"
+            "</div>",
             unsafe_allow_html=True,
         )
 
 
 def tone_of(value):
-    """Bestimmt den Farbton eines Wertes."""
+    """Bestimmt die Farbe anhand des Vorzeichens."""
     number = to_number(value)
 
-    if number is None or number == 0:
+    if (
+        number is None
+        or number == 0
+    ):
         return "neutral"
 
-    return "plus" if number > 0 else "minus"
+    return (
+        "plus"
+        if number > 0
+        else "minus"
+    )
 
 
 # ---------------------------------------------------------
@@ -2453,6 +2995,10 @@ st.markdown(
             white-space: nowrap;
         }
 
+        .kpi-note {
+            font-size: 10px !important;
+        }
+
         .kpi-card {
             padding-left: 2px !important;
             padding-right: 2px !important;
@@ -2464,6 +3010,11 @@ st.markdown(
 
         div[data-testid="stDataFrame"] {
             font-size: 12px !important;
+        }
+
+        .stCaption,
+        div[data-testid="stCaptionContainer"] {
+            font-size: 11px !important;
         }
     }
     </style>
@@ -2481,7 +3032,9 @@ st.markdown(
 # Login
 # ---------------------------------------------------------
 
-if not st.session_state.get("logged_in"):
+if not st.session_state.get(
+    "logged_in"
+):
     _, login_column, _ = st.columns(
         [1, 1.15, 1]
     )
@@ -2522,9 +3075,7 @@ if not st.session_state.get("logged_in"):
         st.markdown(
             """
             <div class="login-security">
-                🔒 Das Passwort wird nur direkt an Kickbase
-                übertragen und nicht von diesem Dashboard
-                gespeichert.
+                🔒 Dein Passwort wird nicht gespeichert.
             </div>
             """,
             unsafe_allow_html=True,
@@ -2542,9 +3093,11 @@ if not st.session_state.get("logged_in"):
                     ):
                         api = KickbaseAPI()
 
-                        login_result = api.login(
-                            email,
-                            password,
+                        login_result = (
+                            api.login(
+                                email,
+                                password,
+                            )
                         )
 
                         leagues = find_leagues(
@@ -2553,17 +3106,27 @@ if not st.session_state.get("logged_in"):
 
                     if not leagues:
                         st.error(
-                            "Login erfolgreich, aber es "
-                            "wurde keine Liga erkannt."
+                            "Login erfolgreich, aber "
+                            "es wurde keine Liga erkannt."
                         )
                         st.stop()
 
-                    st.session_state["api"] = api
-                    st.session_state["leagues"] = (
-                        leagues
+                    st.session_state["api"] = (
+                        api
                     )
-                    st.session_state["logged_in"] = True
-                    st.session_state["view"] = "Manager"
+
+                    st.session_state[
+                        "leagues"
+                    ] = leagues
+
+                    st.session_state[
+                        "logged_in"
+                    ] = True
+
+                    st.session_state["view"] = (
+                        "Manager"
+                    )
+
                     st.session_state[
                         "came_from_league"
                     ] = False
@@ -2584,7 +3147,9 @@ api = st.session_state["api"]
 leagues = st.session_state["leagues"]
 
 if "view" not in st.session_state:
-    st.session_state["view"] = "Manager"
+    st.session_state["view"] = (
+        "Manager"
+    )
 
 compact = st.sidebar.toggle(
     "📱 Handy-Ansicht",
@@ -2611,17 +3176,31 @@ league_index = st.sidebar.selectbox(
     "Liga auswählen",
     range(len(leagues)),
     format_func=lambda index: (
-        get_league_name(leagues[index])
+        get_league_name(
+            leagues[index]
+        )
     ),
 )
 
-selected_league = leagues[league_index]
-league_id = get_league_id(selected_league)
-league_name = get_league_name(selected_league)
+selected_league = (
+    leagues[league_index]
+)
+
+league_id = get_league_id(
+    selected_league
+)
+
+league_name = get_league_name(
+    selected_league
+)
 
 show_realized = st.sidebar.checkbox(
     "Transferhistorie zusätzlich laden",
     value=not compact,
+    help=(
+        "Zeigt zusätzlich bereits "
+        "verkaufte Spieler und deren Gewinne."
+    ),
 )
 
 kpis_expanded = st.sidebar.checkbox(
@@ -2631,16 +3210,17 @@ kpis_expanded = st.sidebar.checkbox(
 
 
 # ---------------------------------------------------------
-# Vereins- und Spielplandaten
+# Vereine und Spielplan laden
 # ---------------------------------------------------------
 
 matches_key = (
-    f"team_matches_v4_{league_id}"
+    f"team_matches_v6_{league_id}"
 )
 
 if matches_key not in st.session_state:
     with st.spinner(
-        "Vereine und Spielplan werden geladen …"
+        "Vereine und Spielplan "
+        "werden geladen …"
     ):
         st.session_state[matches_key] = (
             load_team_and_match_data(
@@ -2649,16 +3229,24 @@ if matches_key not in st.session_state:
             )
         )
 
-matches_info = st.session_state[matches_key]
+matches_info = (
+    st.session_state[matches_key]
+)
+
 teams = matches_info["teams"]
-next_matches = matches_info["next_matches"]
+
+next_matches = (
+    matches_info["next_matches"]
+)
 
 
 # ---------------------------------------------------------
-# Eigener Kontostand
+# Kontostand laden
 # ---------------------------------------------------------
 
-budget_key = f"own_budget_{league_id}"
+budget_key = (
+    f"own_budget_{league_id}"
+)
 
 if budget_key not in st.session_state:
     with st.spinner(
@@ -2671,11 +3259,13 @@ if budget_key not in st.session_state:
             )
         )
 
-own_budget = st.session_state[budget_key]
+own_budget = (
+    st.session_state[budget_key]
+)
 
 
 # ---------------------------------------------------------
-# Spieltag
+# Tage bis zum Spieltag
 # ---------------------------------------------------------
 
 matchday_key = (
@@ -2684,53 +3274,67 @@ matchday_key = (
 
 if matchday_key not in st.session_state:
     with st.spinner(
-        "Spieltag wird geladen …"
+        "Spieltag wird gesucht …"
     ):
-        st.session_state[matchday_key] = (
-            find_days_to_matchday(
-                api,
-                league_id,
-            )
+        st.session_state[
+            matchday_key
+        ] = find_days_to_matchday(
+            api,
+            league_id,
         )
 
-found_days = st.session_state[matchday_key]
-
-default_days = (
-    int(found_days)
-    if found_days is not None
-    else 3
+found_days = (
+    st.session_state[matchday_key]
 )
+
+if found_days is None:
+    default_days = 3
+
+    days_hint = (
+        "Kein Termin konnte automatisch "
+        "ermittelt werden. Bitte den Wert "
+        "manuell einstellen."
+    )
+else:
+    default_days = int(found_days)
+
+    days_hint = (
+        "Der nächste Spieltag wurde "
+        "automatisch berücksichtigt."
+    )
 
 days_widget_key = (
     f"days_to_matchday_{league_id}"
 )
 
-if days_widget_key not in st.session_state:
-    st.session_state[days_widget_key] = (
-        default_days
-    )
+if (
+    days_widget_key
+    not in st.session_state
+):
+    st.session_state[
+        days_widget_key
+    ] = default_days
 
-days_to_matchday = st.sidebar.number_input(
-    "Tage bis zum Spieltag",
-    min_value=0,
-    max_value=30,
-    step=1,
-    key=days_widget_key,
+days_to_matchday = (
+    st.sidebar.number_input(
+        "Tage bis zum Spieltag",
+        min_value=0,
+        max_value=30,
+        step=1,
+        key=days_widget_key,
+        help=(
+            "Dieser Wert wird für die "
+            "Budgetprognose verwendet."
+        ),
+    )
 )
 
+st.sidebar.caption(days_hint)
+
 
 # ---------------------------------------------------------
-# Navigation und Abmelden
+# Titel und Navigation
 # ---------------------------------------------------------
-
-st.sidebar.markdown("---")
-
-if st.sidebar.button(
-    "Abmelden",
-    use_container_width=True,
-):
-    st.session_state.clear()
-    st.rerun()
 
 if compact:
     st.markdown(
@@ -2744,7 +3348,9 @@ if compact:
         unsafe_allow_html=True,
     )
 else:
-    st.title(f"⚽ {league_name}")
+    st.title(
+        f"⚽ {league_name}"
+    )
 
 st.markdown(
     "<div class='top-nav-label'>"
@@ -2763,16 +3369,22 @@ with manager_nav:
         key="nav_manager",
         type=(
             "primary"
-            if st.session_state["view"]
-            == "Manager"
+            if (
+                st.session_state["view"]
+                == "Manager"
+            )
             else "secondary"
         ),
         use_container_width=True,
     ):
-        st.session_state["view"] = "Manager"
+        st.session_state["view"] = (
+            "Manager"
+        )
+
         st.session_state[
             "came_from_league"
         ] = False
+
         st.rerun()
 
 with league_nav:
@@ -2781,16 +3393,22 @@ with league_nav:
         key="nav_liga",
         type=(
             "primary"
-            if st.session_state["view"]
-            == "Liga"
+            if (
+                st.session_state["view"]
+                == "Liga"
+            )
             else "secondary"
         ),
         use_container_width=True,
     ):
-        st.session_state["view"] = "Liga"
+        st.session_state["view"] = (
+            "Liga"
+        )
+
         st.session_state[
             "came_from_league"
         ] = False
+
         st.rerun()
 
 with market_nav:
@@ -2799,8 +3417,10 @@ with market_nav:
         key="nav_transfermarkt",
         type=(
             "primary"
-            if st.session_state["view"]
-            == "Transfermarkt"
+            if (
+                st.session_state["view"]
+                == "Transfermarkt"
+            )
             else "secondary"
         ),
         use_container_width=True,
@@ -2808,9 +3428,11 @@ with market_nav:
         st.session_state["view"] = (
             "Transfermarkt"
         )
+
         st.session_state[
             "came_from_league"
         ] = False
+
         st.rerun()
 
 view = st.session_state["view"]
@@ -2840,11 +3462,15 @@ with st.spinner(
     "Manager werden geladen …"
 ):
     ranking_sources, ranking_errors = (
-        api.get_ranking(league_id)
+        api.get_ranking(
+            league_id
+        )
     )
 
 for source in ranking_sources:
-    found = find_managers(source["data"])
+    found = find_managers(
+        source["data"]
+    )
 
     if found:
         managers = found
@@ -2852,12 +3478,17 @@ for source in ranking_sources:
 
 if not managers:
     st.error(
-        "Es konnten keine Manager geladen werden."
+        "Es konnten keine Manager "
+        "geladen werden."
     )
 
     if ranking_errors:
-        with st.expander("Fehlerdetails"):
-            st.write(ranking_errors)
+        with st.expander(
+            "Fehlerdetails"
+        ):
+            st.write(
+                ranking_errors
+            )
 
     if st.button("Neu anmelden"):
         st.session_state.clear()
@@ -2865,14 +3496,18 @@ if not managers:
 
     st.stop()
 
-own_manager_id = resolve_own_manager_id(
-    api,
-    managers,
+own_manager_id = (
+    resolve_own_manager_id(
+        api,
+        managers,
+    )
 )
 
-managers = order_managers_own_first(
-    managers,
-    own_manager_id,
+managers = (
+    order_managers_own_first(
+        managers,
+        own_manager_id,
+    )
 )
 
 manager_lookup = {
@@ -2880,28 +3515,107 @@ manager_lookup = {
     for manager in managers
 }
 
-manager_ids = list(manager_lookup.keys())
+manager_ids = list(
+    manager_lookup.keys()
+)
 
 
 # ---------------------------------------------------------
-# Bonus
+# Budget-Einstellungen in der Seitenleiste
 # ---------------------------------------------------------
 
-bonus_key = f"own_bonus_{league_id}"
+st.sidebar.markdown("---")
+st.sidebar.markdown("### Budget")
 
-if bonus_key not in st.session_state:
-    suggested_bonus = compute_own_bonus(
-        api,
-        league_id,
-        own_manager_id,
-        own_budget,
+st.sidebar.caption(
+    "Grundwert fest: "
+    f"{format_currency(BASE_BUDGET)}"
+)
+
+bonus_info_key = (
+    f"own_bonus_info_{league_id}"
+)
+
+bonus_widget_key = (
+    f"bonus_mio_{league_id}"
+)
+
+if st.sidebar.button(
+    "Bonus neu berechnen",
+    use_container_width=True,
+):
+    st.session_state.pop(
+        bonus_info_key,
+        None,
     )
 
-    st.session_state[bonus_key] = round(
-        float(
-            (suggested_bonus or 0.0)
-            / 1_000_000
-        ),
+    st.session_state.pop(
+        bonus_widget_key,
+        None,
+    )
+
+    st.session_state.pop(
+        budget_key,
+        None,
+    )
+
+    st.session_state.pop(
+        f"league_rows_v10_{league_id}",
+        None,
+    )
+
+    st.rerun()
+
+if (
+    bonus_info_key
+    not in st.session_state
+):
+    with st.spinner(
+        "Bonus wird ermittelt …"
+    ):
+        st.session_state[
+            bonus_info_key
+        ] = compute_own_bonus(
+            api,
+            league_id,
+            own_manager_id,
+            own_budget,
+        )
+
+own_bonus_info = (
+    st.session_state[
+        bonus_info_key
+    ]
+)
+
+if own_bonus_info is not None:
+    suggested_bonus = (
+        own_bonus_info["bonus"]
+        / 1_000_000
+    )
+
+    bonus_hint = (
+        "Vorschlag aus der Differenz "
+        "zwischen berechnetem und "
+        "tatsächlichem Kontostand."
+    )
+else:
+    suggested_bonus = 0.0
+
+    bonus_hint = (
+        "Der Bonus konnte nicht automatisch "
+        "ermittelt werden. Du kannst ihn "
+        "manuell eintragen."
+    )
+
+if (
+    bonus_widget_key
+    not in st.session_state
+):
+    st.session_state[
+        bonus_widget_key
+    ] = round(
+        float(suggested_bonus),
         2,
     )
 
@@ -2910,10 +3624,58 @@ bonus_mio = st.sidebar.number_input(
     min_value=-200.0,
     max_value=500.0,
     step=0.5,
-    key=bonus_key,
+    key=bonus_widget_key,
+    help=(
+        "Dieser Bonus wird für die "
+        "Schätzung fremder Manager verwendet."
+    ),
 )
 
-bonus = bonus_mio * 1_000_000
+bonus = (
+    bonus_mio
+    * 1_000_000
+)
+
+st.sidebar.caption(
+    bonus_hint
+)
+
+if own_bonus_info is not None:
+    st.sidebar.caption(
+        "Eigene Berechnung ohne Bonus: "
+        + format_currency(
+            own_bonus_info["plain"]
+        )
+    )
+
+    st.sidebar.caption(
+        "Eigener Kontostand: "
+        + format_currency(
+            own_bonus_info["real"]
+        )
+    )
+
+    st.sidebar.caption(
+        "Differenz als Bonus: "
+        + format_signed_currency(
+            own_bonus_info["bonus"]
+        )
+    )
+
+
+# ---------------------------------------------------------
+# Abmelden
+# ---------------------------------------------------------
+
+st.sidebar.markdown("---")
+
+if st.sidebar.button(
+    "Abmelden",
+    key="logout",
+    use_container_width=True,
+):
+    st.session_state.clear()
+    st.rerun()
 
 
 # ---------------------------------------------------------
@@ -2921,17 +3683,30 @@ bonus = bonus_mio * 1_000_000
 # ---------------------------------------------------------
 
 if view == "Liga":
-    st.subheader("Liga-Vergleich")
-
-    cache_key = (
-        f"league_rows_v8_{league_id}"
+    st.subheader(
+        "Liga-Vergleich"
     )
 
-    if st.button("Daten neu laden"):
+    if not compact:
+        st.caption(
+            "Ein Klick auf eine Zeile öffnet "
+            "die Detailansicht. Eine rote "
+            "Kaderzahl bedeutet, dass die "
+            "Startelf nicht vollständig ist."
+        )
+
+    cache_key = (
+        f"league_rows_v10_{league_id}"
+    )
+
+    if st.button(
+        "Daten neu laden"
+    ):
         st.session_state.pop(
             cache_key,
             None,
         )
+
         st.rerun()
 
     if cache_key not in st.session_state:
@@ -2939,18 +3714,24 @@ if view == "Liga":
 
         progress = st.progress(
             0.0,
-            text="Kader werden geladen …",
+            text=(
+                "Kader werden geladen …"
+            ),
         )
 
         for index, manager in enumerate(
             managers
         ):
-            manager_id = get_manager_id(
-                manager
+            manager_id = (
+                get_manager_id(
+                    manager
+                )
             )
 
-            manager_name = get_manager_name(
-                manager
+            manager_name = (
+                get_manager_name(
+                    manager
+                )
             )
 
             manager_players, _ = (
@@ -2961,17 +3742,19 @@ if view == "Liga":
                 )
             )
 
-            manager_stats = compute_stats(
-                manager_players
+            manager_stats = (
+                compute_stats(
+                    manager_players
+                )
             )
 
-            realized = load_realized_profit(
-                api,
-                league_id,
-                manager_id,
+            realized = (
+                load_realized_profit(
+                    api,
+                    league_id,
+                    manager_id,
+                )
             )
-
-            realized_value = realized or 0.0
 
             rows.append(
                 {
@@ -3010,7 +3793,7 @@ if view == "Liga":
                         manager_stats[
                             "profit_in_club"
                         ]
-                        + realized_value
+                        + (realized or 0.0)
                     ),
                     "Trend Start 11": (
                         manager_stats[
@@ -3031,7 +3814,10 @@ if view == "Liga":
             )
 
             progress.progress(
-                (index + 1) / len(managers),
+                (
+                    index + 1
+                )
+                / len(managers),
                 text=(
                     "Kader werden geladen … "
                     f"{index + 1} "
@@ -3041,7 +3827,9 @@ if view == "Liga":
 
         progress.empty()
 
-        st.session_state[cache_key] = rows
+        st.session_state[
+            cache_key
+        ] = rows
 
     league_frame = pd.DataFrame(
         st.session_state[cache_key]
@@ -3050,7 +3838,9 @@ if view == "Liga":
     league_frame["Kontostand"] = (
         BASE_BUDGET
         + bonus
-        + league_frame["Gewinn gesamt"]
+        + league_frame[
+            "Gewinn gesamt"
+        ]
         - league_frame["Kaderwert"]
     )
 
@@ -3067,12 +3857,18 @@ if view == "Liga":
 
     league_frame["Am Spieltag"] = (
         league_frame["Nach Verkauf"]
-        + league_frame["Trend Trading"]
+        + league_frame[
+            "Trend Trading"
+        ]
         * days_to_matchday
     )
 
     league_frame["Manager"] = [
-        f"● {name}" if own else name
+        (
+            f"● {name}"
+            if own
+            else name
+        )
         for name, own in zip(
             league_frame["Manager"],
             league_frame["Ich"],
@@ -3104,13 +3900,15 @@ if view == "Liga":
             "Am Spieltag",
         ]
 
-    sortable_frame = league_frame[
-        [
-            "Manager-ID",
-            "Startelf-Anzahl",
-            *visible_columns,
-        ]
-    ].copy()
+    sortable_frame = (
+        league_frame[
+            [
+                "Manager-ID",
+                "Startelf-Anzahl",
+                *visible_columns,
+            ]
+        ].copy()
+    )
 
     sortable_frame = sort_controls(
         sortable_frame,
@@ -3120,23 +3918,32 @@ if view == "Liga":
         compact=compact,
     )
 
-    sorted_manager_ids = sortable_frame[
-        "Manager-ID"
-    ].tolist()
+    sorted_manager_ids = (
+        sortable_frame[
+            "Manager-ID"
+        ].tolist()
+    )
 
-    lineup_counts = sortable_frame[
-        "Startelf-Anzahl"
-    ].tolist()
+    lineup_counts = (
+        sortable_frame[
+            "Startelf-Anzahl"
+        ].tolist()
+    )
 
-    display_frame = sortable_frame.drop(
-        columns=[
-            "Manager-ID",
-            "Startelf-Anzahl",
-        ]
+    display_frame = (
+        sortable_frame.drop(
+            columns=[
+                "Manager-ID",
+                "Startelf-Anzahl",
+            ]
+        )
     )
 
     display_frame["Kader"] = [
-        build_squad_label(total, lineup)
+        build_squad_label(
+            total,
+            lineup,
+        )
         for total, lineup in zip(
             display_frame["Kader"],
             lineup_counts,
@@ -3174,6 +3981,37 @@ if view == "Liga":
             **dataframe_arguments,
         )
 
+        st.info(
+            "Der Zeilenklick benötigt "
+            "eine neuere Streamlit-Version."
+        )
+
+    st.caption(
+        "Kader zeigt die Gesamtzahl der Spieler. "
+        "Wenn die Startelf nicht genau 11 Spieler "
+        "enthält, wird ihre Anzahl in Klammern "
+        "ergänzt und rot markiert."
+    )
+
+    if own_budget is not None:
+        st.caption(
+            "Beim eigenen Manager wird der "
+            "tatsächliche Kontostand verwendet. "
+            "Die anderen Kontostände werden mit "
+            f"{format_currency(BASE_BUDGET)} Grundwert, "
+            f"{format_currency(bonus)} Bonus und "
+            f"{days_to_matchday} Tagen bis zum "
+            "Spieltag geschätzt."
+        )
+    else:
+        st.caption(
+            "Die Kontostände werden mit "
+            f"{format_currency(BASE_BUDGET)} Grundwert, "
+            f"{format_currency(bonus)} Bonus und "
+            f"{days_to_matchday} Tagen bis zum "
+            "Spieltag geschätzt."
+        )
+
     selected_rows = []
 
     if selection is not None:
@@ -3185,10 +4023,13 @@ if view == "Liga":
             selected_rows = []
 
     if selected_rows:
-        selected_row = selected_rows[0]
+        selected_row = (
+            selected_rows[0]
+        )
 
-        if selected_row < len(
-            sorted_manager_ids
+        if (
+            selected_row
+            < len(sorted_manager_ids)
         ):
             chosen_manager_id = str(
                 sorted_manager_ids[
@@ -3205,7 +4046,10 @@ if view == "Liga":
                 selection_key
             ] = chosen_manager_id
 
-            st.session_state["view"] = "Manager"
+            st.session_state[
+                "view"
+            ] = "Manager"
+
             st.session_state[
                 "came_from_league"
             ] = True
@@ -3229,14 +4073,20 @@ if st.session_state.get(
             "came_from_league"
         ] = False
 
-        st.session_state["view"] = "Liga"
+        st.session_state["view"] = (
+            "Liga"
+        )
+
         st.rerun()
 
 selection_key = (
     f"manager_selection_{league_id}"
 )
 
-if selection_key not in st.session_state:
+if (
+    selection_key
+    not in st.session_state
+):
     if own_manager_id in manager_ids:
         st.session_state[
             selection_key
@@ -3273,17 +4123,23 @@ selected_manager_id = st.selectbox(
             else ""
         )
         + get_manager_name(
-            manager_lookup[manager_id]
+            manager_lookup[
+                manager_id
+            ]
         )
     ),
 )
 
-selected_manager = manager_lookup[
-    selected_manager_id
-]
+selected_manager = (
+    manager_lookup[
+        selected_manager_id
+    ]
+)
 
-selected_manager_name = get_manager_name(
-    selected_manager
+selected_manager_name = (
+    get_manager_name(
+        selected_manager
+    )
 )
 
 viewing_self = is_own_manager(
@@ -3296,7 +4152,9 @@ viewing_self = is_own_manager(
 # Kader und Gewinne laden
 # ---------------------------------------------------------
 
-with st.spinner("Kader wird geladen …"):
+with st.spinner(
+    "Kader wird geladen …"
+):
     players, squad_error = (
         load_manager_players(
             api,
@@ -3307,6 +4165,7 @@ with st.spinner("Kader wird geladen …"):
 
 realized_profit = None
 realized_trades = []
+feed_samples = []
 
 if show_realized and players:
     with st.spinner(
@@ -3315,23 +4174,30 @@ if show_realized and players:
         (
             feed_profit,
             realized_trades,
+            feed_samples,
         ) = load_feed_transfers(
             api,
             league_id,
             selected_manager_id,
         )
 
-        realized_profit = feed_profit
+        realized_profit = (
+            feed_profit
+        )
 
 if players:
-    direct_profit = load_realized_profit(
-        api,
-        league_id,
-        selected_manager_id,
+    direct_profit = (
+        load_realized_profit(
+            api,
+            league_id,
+            selected_manager_id,
+        )
     )
 
     if direct_profit is not None:
-        realized_profit = direct_profit
+        realized_profit = (
+            direct_profit
+        )
 
 
 # ---------------------------------------------------------
@@ -3340,10 +4206,14 @@ if players:
 
 stats = compute_stats(players)
 
-total_profit = stats["profit_in_club"]
+total_profit = (
+    stats["profit_in_club"]
+)
 
 if realized_profit is not None:
-    total_profit += realized_profit
+    total_profit += (
+        realized_profit
+    )
 
 real_balance = (
     own_budget
@@ -3367,7 +4237,11 @@ open_kpis = (
     )
 )
 
-title_marker = " ●" if viewing_self else ""
+title_marker = (
+    " ●"
+    if viewing_self
+    else ""
+)
 
 with st.expander(
     (
@@ -3383,22 +4257,70 @@ with st.expander(
             (
                 "Start 11",
                 format_currency(
-                    stats["lineup_value"]
+                    stats[
+                        "lineup_value"
+                    ]
                 ),
+                [
+                    (
+                        "Einstand: "
+                        + format_currency(
+                            stats[
+                                "buy_lineup"
+                            ]
+                        )
+                    ),
+                    (
+                        f"{stats['lineup_count']} "
+                        "Spieler"
+                    ),
+                ],
                 "neutral",
             ),
             (
                 "Trading",
                 format_currency(
-                    stats["trading_value"]
+                    stats[
+                        "trading_value"
+                    ]
                 ),
+                [
+                    (
+                        "Einstand: "
+                        + format_currency(
+                            stats[
+                                "buy_trading"
+                            ]
+                        )
+                    ),
+                    (
+                        f"{stats['trading_count']} "
+                        "Spieler"
+                    ),
+                ],
                 "neutral",
             ),
             (
                 "Gesamt",
                 format_currency(
-                    stats["squad_value"]
+                    stats[
+                        "squad_value"
+                    ]
                 ),
+                [
+                    (
+                        "Einstand: "
+                        + format_currency(
+                            stats[
+                                "buy_total"
+                            ]
+                        )
+                    ),
+                    (
+                        f"{stats['player_count']} "
+                        "Spieler"
+                    ),
+                ],
                 "neutral",
             ),
         ],
@@ -3414,19 +4336,33 @@ with st.expander(
                     format_signed_currency(
                         realized_profit
                     )
-                    if realized_profit
-                    is not None
+                    if (
+                        realized_profit
+                        is not None
+                    )
                     else "—"
                 ),
-                tone_of(realized_profit),
+                [
+                    "Gewinn aus abgeschlossenen Verkäufen"
+                ],
+                tone_of(
+                    realized_profit
+                ),
             ),
             (
                 "Im Verein",
                 format_signed_currency(
-                    stats["profit_in_club"]
+                    stats[
+                        "profit_in_club"
+                    ]
                 ),
+                [
+                    "Noch nicht realisierter Gewinn"
+                ],
                 tone_of(
-                    stats["profit_in_club"]
+                    stats[
+                        "profit_in_club"
+                    ]
                 ),
             ),
             (
@@ -3434,7 +4370,12 @@ with st.expander(
                 format_signed_currency(
                     total_profit
                 ),
-                tone_of(total_profit),
+                [
+                    "Realisiert plus im Verein"
+                ],
+                tone_of(
+                    total_profit
+                ),
             ),
         ],
         compact=compact,
@@ -3446,42 +4387,80 @@ with st.expander(
             (
                 "Start 11",
                 format_signed_currency(
-                    stats["trend_lineup"]
+                    stats[
+                        "trend_lineup"
+                    ]
                 ),
+                [
+                    "Letzte 24 Stunden"
+                ],
                 tone_of(
-                    stats["trend_lineup"]
+                    stats[
+                        "trend_lineup"
+                    ]
                 ),
             ),
             (
                 "Trading",
                 format_signed_currency(
-                    stats["trend_trading"]
+                    stats[
+                        "trend_trading"
+                    ]
                 ),
+                [
+                    "Letzte 24 Stunden"
+                ],
                 tone_of(
-                    stats["trend_trading"]
+                    stats[
+                        "trend_trading"
+                    ]
                 ),
             ),
             (
                 "Gesamt",
                 format_signed_currency(
-                    stats["trend_total"]
+                    stats[
+                        "trend_total"
+                    ]
                 ),
+                [
+                    "Letzte 24 Stunden"
+                ],
                 tone_of(
-                    stats["trend_total"]
+                    stats[
+                        "trend_total"
+                    ]
                 ),
             ),
         ],
         compact=compact,
     )
 
+    budget_title = (
+        "Budget"
+        if viewing_self
+        else "Budget geschätzt"
+    )
+
     kpi_block(
-        "Budget",
+        budget_title,
         [
             (
                 "Kontostand",
                 format_signed_currency(
                     budget["balance"]
                 ),
+                [
+                    (
+                        "Aktueller Kontostand"
+                        if viewing_self
+                        else (
+                            f"{format_currency(BASE_BUDGET)} "
+                            "Grundwert plus Bonus und Gewinn, "
+                            "minus Kaderwert"
+                        )
+                    )
+                ],
                 tone_of(
                     budget["balance"]
                 ),
@@ -3489,24 +4468,63 @@ with st.expander(
             (
                 "Nach Verkauf",
                 format_signed_currency(
-                    budget["after_sale"]
+                    budget[
+                        "after_sale"
+                    ]
                 ),
+                [
+                    (
+                        "Plus Trading: "
+                        + format_currency(
+                            stats[
+                                "trading_value"
+                            ]
+                        )
+                    ),
+                    (
+                        f"{stats['trading_count']} "
+                        "Spieler"
+                    ),
+                ],
                 tone_of(
-                    budget["after_sale"]
+                    budget[
+                        "after_sale"
+                    ]
                 ),
             ),
             (
                 "Am Spieltag",
                 format_signed_currency(
-                    budget["at_matchday"]
+                    budget[
+                        "at_matchday"
+                    ]
                 ),
+                [
+                    (
+                        f"Prognose in "
+                        f"{days_to_matchday} Tagen"
+                    ),
+                    (
+                        "Trend Trading: "
+                        + format_signed_currency(
+                            stats[
+                                "trend_trading"
+                            ]
+                        )
+                        + " pro Tag"
+                    ),
+                ],
                 tone_of(
-                    budget["at_matchday"]
+                    budget[
+                        "at_matchday"
+                    ]
                 ),
             ),
         ],
         compact=compact,
     )
+
+    st.markdown("")
 
 
 # ---------------------------------------------------------
@@ -3517,7 +4535,8 @@ if compact:
     st.subheader("Kader")
 else:
     st.subheader(
-        f"Kader von {selected_manager_name}"
+        f"Kader von "
+        f"{selected_manager_name}"
     )
 
 if (
@@ -3550,7 +4569,10 @@ elif players:
     for player in players:
         position = first_value(
             player,
-            ["position", "pos"],
+            [
+                "position",
+                "pos",
+            ],
         )
 
         try:
@@ -3562,7 +4584,9 @@ elif players:
             TypeError,
             ValueError,
         ):
-            position_name = "Unbekannt"
+            position_name = (
+                "Unbekannt"
+            )
 
         status = (
             "Start 11"
@@ -3570,29 +4594,39 @@ elif players:
             else "Trading"
         )
 
-        team_id = get_team_id(player)
+        team_id = get_team_id(
+            player
+        )
 
         club_label = get_club_label(
             player,
             teams,
         )
 
-        club_logo = get_player_club_logo(
-            player,
-            teams,
+        club_logo = (
+            get_player_club_logo(
+                player,
+                teams,
+            )
         )
 
-        player_photo = get_player_photo(
-            player
+        player_photo = (
+            get_player_photo(
+                player
+            )
         )
 
         if compact:
-            player_name = get_short_player_name(
-                player
+            player_name = (
+                get_short_player_name(
+                    player
+                )
             )
         else:
-            player_name = get_player_name(
-                player
+            player_name = (
+                get_player_name(
+                    player
+                )
             )
 
         photo_html = ""
@@ -3623,16 +4657,20 @@ elif players:
         player_html = (
             f"{photo_html}"
             f"{club_logo_html}"
-            f"<span class='squad-player-name'>"
+            "<span class='squad-player-name'>"
             f"{escape(player_name)}"
-            f"</span>"
+            "</span>"
         )
 
         player_rows.append(
             {
                 "Spieler": player_name,
-                "_spieler_html": player_html,
-                "Position": position_name,
+                "_spieler_html": (
+                    player_html
+                ),
+                "Position": (
+                    position_name
+                ),
                 "Status": status,
                 "Nächste Spiele": (
                     build_next_matches_text(
@@ -3650,16 +4688,24 @@ elif players:
                     )
                 ),
                 "Einstandspreis": (
-                    get_buy_price(player)
+                    get_buy_price(
+                        player
+                    )
                 ),
                 "Marktwert": (
-                    get_market_value(player)
+                    get_market_value(
+                        player
+                    )
                 ),
                 "Gewinn gesamt": (
-                    get_profit(player)
+                    get_profit(
+                        player
+                    )
                 ),
                 "Trend 24 Stunden": (
-                    get_daily_change(player)
+                    get_daily_change(
+                        player
+                    )
                 ),
             }
         )
@@ -3683,7 +4729,9 @@ elif players:
         player_frame,
         player_columns,
         key="kader",
-        default_column="Gewinn gesamt",
+        default_column=(
+            "Gewinn gesamt"
+        ),
         compact=compact,
     )
 
@@ -3693,8 +4741,16 @@ elif players:
         compact=compact,
     )
 
+    st.caption(
+        "Beim Spieler stehen Spielerbild "
+        "und Vereinslogo. H bedeutet Heimspiel "
+        "und A bedeutet Auswärtsspiel."
+    )
+
 else:
-    st.info("Keine Spieler gefunden.")
+    st.info(
+        "Keine Spieler gefunden."
+    )
 
 
 # ---------------------------------------------------------
@@ -3702,7 +4758,9 @@ else:
 # ---------------------------------------------------------
 
 if realized_trades:
-    st.subheader("Verkaufte Spieler")
+    st.subheader(
+        "Verkaufte Spieler"
+    )
 
     trades_frame = pd.DataFrame(
         realized_trades
@@ -3732,3 +4790,262 @@ if realized_trades:
             compact,
         ),
     )
+
+
+# ---------------------------------------------------------
+# Spielerdiagnose
+# ---------------------------------------------------------
+
+with st.expander(
+    "Alle Daten zu einem Spieler"
+):
+    if players:
+        inspect_index = st.selectbox(
+            "Spieler auswählen",
+            range(len(players)),
+            format_func=lambda index: (
+                get_player_name(
+                    players[index]
+                )
+            ),
+        )
+
+        inspect_player = (
+            players[inspect_index]
+        )
+
+        st.write(
+            "Verein: "
+            + (
+                get_club_label(
+                    inspect_player,
+                    teams,
+                )
+                or "nicht erkannt"
+            )
+        )
+
+        st.write(
+            "Spielerbild: "
+            + (
+                "vorhanden"
+                if get_player_photo(
+                    inspect_player
+                )
+                else "nicht vorhanden"
+            )
+        )
+
+        st.write(
+            "Vereinslogo: "
+            + (
+                "vorhanden"
+                if get_player_club_logo(
+                    inspect_player,
+                    teams,
+                )
+                else "nicht vorhanden"
+            )
+        )
+
+        squad_fields = flatten_fields(
+            inspect_player
+        )
+
+        if squad_fields:
+            st.dataframe(
+                pd.DataFrame(
+                    squad_fields
+                ),
+                use_container_width=True,
+                hide_index=True,
+                height=400,
+            )
+
+        st.write("**Rohdaten:**")
+        st.json(inspect_player)
+
+    else:
+        st.info(
+            "Keine Spielerdaten vorhanden."
+        )
+
+
+# ---------------------------------------------------------
+# Weitere Diagnosebereiche
+# ---------------------------------------------------------
+
+if not compact:
+    with st.expander(
+        "Diagnose Vereine und Spielplan"
+    ):
+        st.write(
+            f"Erkannte Vereine: "
+            f"{len(teams)}"
+        )
+
+        logo_count = sum(
+            1
+            for entry in teams.values()
+            if entry.get("logo")
+        )
+
+        st.write(
+            f"Vereine mit Logo: "
+            f"{logo_count}"
+        )
+
+        st.write(
+            "Vereine mit nächsten Spielen: "
+            f"{len(next_matches)}"
+        )
+
+        if st.button(
+            "Vereine und Spielplan neu laden"
+        ):
+            st.session_state.pop(
+                matches_key,
+                None,
+            )
+
+            st.rerun()
+
+        if teams:
+            st.write(
+                "**Erkannte Vereine:**"
+            )
+
+            st.json(teams)
+
+        if next_matches:
+            st.write(
+                "**Nächste Spiele:**"
+            )
+
+            st.json(
+                next_matches
+            )
+
+        diagnostic_sets = (
+            matches_info[
+                "competition_sources"
+            ]
+            + matches_info[
+                "team_sources"
+            ]
+            + matches_info[
+                "match_sources"
+            ]
+        )
+
+        if diagnostic_sets:
+            st.write(
+                "**Zusätzliche Rohdaten:**"
+            )
+
+            for index, source in enumerate(
+                diagnostic_sets,
+                start=1,
+            ):
+                with st.expander(
+                    f"Datensatz {index}"
+                ):
+                    st.json(
+                        source.get("data")
+                    )
+
+    with st.expander(
+        "Alle Daten zu diesem Manager"
+    ):
+        st.write(
+            "Ausgewählter Manager: "
+            f"{selected_manager_name}"
+        )
+
+        st.write(
+            "Eigener Manager: "
+            + (
+                "Ja"
+                if viewing_self
+                else "Nein"
+            )
+        )
+
+        if st.button(
+            "Manager-Daten laden"
+        ):
+            with st.spinner(
+                "Zusätzliche Daten "
+                "werden geladen …"
+            ):
+                try:
+                    (
+                        manager_sources,
+                        manager_errors,
+                    ) = api.explore_manager(
+                        league_id,
+                        selected_manager_id,
+                    )
+                except Exception as error:
+                    manager_sources = []
+
+                    manager_errors = [
+                        str(error)
+                    ]
+
+            st.session_state[
+                "manager_diagnostic_sources"
+            ] = manager_sources
+
+            st.session_state[
+                "manager_diagnostic_errors"
+            ] = manager_errors
+
+        manager_sources = (
+            st.session_state.get(
+                "manager_diagnostic_sources",
+                [],
+            )
+        )
+
+        manager_errors = (
+            st.session_state.get(
+                "manager_diagnostic_errors",
+                [],
+            )
+        )
+
+        for index, source in enumerate(
+            manager_sources,
+            start=1,
+        ):
+            with st.expander(
+                f"Datensatz {index}"
+            ):
+                st.json(
+                    source.get("data")
+                )
+
+        if manager_errors:
+            st.warning(
+                "Einige zusätzlichen Daten "
+                "konnten nicht geladen werden."
+            )
+
+    with st.expander(
+        "Diagnose der Transferdaten"
+    ):
+        if feed_samples:
+            for index, sample in enumerate(
+                feed_samples,
+                start=1,
+            ):
+                with st.expander(
+                    f"Datensatz {index}"
+                ):
+                    st.json(sample)
+        else:
+            st.write(
+                "Keine zusätzlichen "
+                "Transferdaten geladen."
+            )
