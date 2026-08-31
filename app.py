@@ -11,6 +11,7 @@ Optimiert für Desktop und Handy.
 
 from datetime import datetime, timezone
 from html import escape
+from urllib.parse import quote
 
 import pandas as pd
 import streamlit as st
@@ -39,6 +40,11 @@ PLAYER_PHOTO_SIZE = 24
 
 TEAM_LOGO_SIZE_MOBILE = 14
 PLAYER_PHOTO_SIZE_MOBILE = 20
+
+# Farben für die Gruppen in der Ligaübersicht
+LEAGUE_HEADER_MAIN = "#f2f4f7"
+LEAGUE_HEADER_TREND = "#eaf6ef"
+LEAGUE_HEADER_BUDGET = "#fff3e3"
 
 
 # ---------------------------------------------------------
@@ -93,8 +99,8 @@ def format_currency(value):
         return "—"
 
     amount = number / 1_000_000
-
     text = f"{amount:,.2f}"
+
     text = text.replace(",", "X")
     text = text.replace(".", ",")
     text = text.replace("X", ".")
@@ -116,7 +122,7 @@ def format_signed_currency(value):
 
 
 def table_height(row_count, compact=False):
-    """Berechnet die Tabellenhöhe."""
+    """Berechnet die Höhe einer Streamlit-Tabelle."""
     row_height = 30 if compact else 35
     header_height = 34 if compact else 38
 
@@ -165,22 +171,23 @@ def sort_controls(
 
     direction = right.selectbox(
         "Reihenfolge",
-        ["Absteigend", "Aufsteigend"],
+        [
+            "Absteigend",
+            "Aufsteigend",
+        ],
         key=f"{key}_richtung",
     )
 
     return frame.sort_values(
         sort_column,
-        ascending=direction == "Aufsteigend",
+        ascending=(
+            direction == "Aufsteigend"
+        ),
         kind="stable",
     ).reset_index(drop=True)
 
 
-def flatten_fields(
-    value,
-    prefix="",
-    depth=0,
-):
+def flatten_fields(value, prefix="", depth=0):
     """Wandelt verschachtelte Daten in eine Tabelle um."""
     rows = []
 
@@ -255,14 +262,16 @@ def get_league_id(league):
     """Ermittelt die Liga-ID."""
     value = first_value(
         league,
-        ["id", "i", "leagueId", "li"],
+        [
+            "id",
+            "i",
+            "leagueId",
+            "li",
+        ],
         "",
     )
 
-    if value is None:
-        return ""
-
-    return str(value)
+    return str(value) if value is not None else ""
 
 
 def get_league_name(league):
@@ -295,10 +304,7 @@ def get_manager_id(manager):
         "",
     )
 
-    if value is None:
-        return ""
-
-    return str(value)
+    return str(value) if value is not None else ""
 
 
 def get_manager_name(manager):
@@ -333,10 +339,7 @@ def get_player_id(player):
         ],
     )
 
-    if value is None:
-        return None
-
-    return str(value)
+    return str(value) if value is not None else None
 
 
 def get_player_name(player):
@@ -386,7 +389,7 @@ def get_player_name(player):
 
 
 def get_short_player_name(player):
-    """Gibt einen kurzen Namen zurück."""
+    """Gibt einen kurzen Spielernamen zurück."""
     last_name = first_value(
         player,
         [
@@ -433,10 +436,7 @@ def has_own_manager_marker(manager):
     return False
 
 
-def resolve_own_manager_id(
-    api,
-    managers,
-):
+def resolve_own_manager_id(api, managers):
     """Ermittelt die ID des angemeldeten Managers."""
     own_user_id = getattr(
         api,
@@ -573,10 +573,7 @@ def build_image_url(value):
     )
 
 
-def collect_dictionaries(
-    data,
-    depth=0,
-):
+def collect_dictionaries(data, depth=0):
     """Sammelt rekursiv alle Dictionaries."""
     found = []
 
@@ -678,9 +675,7 @@ def extract_team_info(sources):
     for source in sources:
         data = source.get("data")
 
-        for item in collect_dictionaries(
-            data
-        ):
+        for item in collect_dictionaries(data):
             if not looks_like_team(item):
                 continue
 
@@ -742,9 +737,7 @@ def extract_team_info(sources):
     for source in sources:
         data = source.get("data")
 
-        for item in collect_dictionaries(
-            data
-        ):
+        for item in collect_dictionaries(data):
             team_id = first_value(
                 item,
                 TEAM_ID_KEYS,
@@ -853,10 +846,7 @@ def get_team_logo(team_id, teams):
     return entry.get("logo", "")
 
 
-def get_club_label(
-    player,
-    teams=None,
-):
+def get_club_label(player, teams=None):
     """Ermittelt eine kurze Vereinsbezeichnung."""
     short_name = first_text(
         player,
@@ -874,7 +864,10 @@ def get_club_label(
     if isinstance(club_name, dict):
         club_name = first_text(
             club_name,
-            ["name", "n"],
+            [
+                "name",
+                "n",
+            ],
         )
 
     if (
@@ -1059,10 +1052,7 @@ def get_lineup_matchday_value(
     stats,
     days_to_matchday,
 ):
-    """
-    Berechnet den voraussichtlichen S11-Marktwert
-    am Spieltag.
-    """
+    """Berechnet den prognostizierten S11-Marktwert."""
     return (
         stats["lineup_value"]
         + stats["trend_lineup"]
@@ -1148,10 +1138,7 @@ def parse_any_date(value):
     return None
 
 
-def collect_future_dates(
-    data,
-    depth=0,
-):
+def collect_future_dates(data, depth=0):
     """Sammelt passende zukünftige Datumswerte."""
     found = []
 
@@ -1200,21 +1187,12 @@ def find_days_to_matchday(
 ):
     """Sucht die verbleibenden Tage bis zum Spieltag."""
     paths = [
-        (
-            f"/v4/leagues/"
-            f"{league_id}/matchdays"
-        ),
-        (
-            f"/v4/leagues/"
-            f"{league_id}/matchday"
-        ),
+        f"/v4/leagues/{league_id}/matchdays",
+        f"/v4/leagues/{league_id}/matchday",
         "/v4/competitions/1/matchdays",
         "/v4/competitions/1/matchday",
         "/v4/matchdays",
-        (
-            f"/v4/leagues/"
-            f"{league_id}/season"
-        ),
+        f"/v4/leagues/{league_id}/season",
     ]
 
     now = datetime.now(
@@ -1306,9 +1284,7 @@ MATCH_DATE_KEYS = [
 ]
 
 
-def extract_matches(
-    match_sources
-):
+def extract_matches(match_sources):
     """Sammelt kommende Spiele."""
     matches = []
     seen = set()
@@ -1700,9 +1676,7 @@ def looks_like_manager(item):
     )
 
 
-def looks_like_player_with_value(
-    item
-):
+def looks_like_player_with_value(item):
     """Prüft, ob ein Objekt ein Spieler sein könnte."""
     return (
         isinstance(item, dict)
@@ -2004,14 +1978,10 @@ def load_feed_transfers(
     names = {}
 
     for event in events:
-        player_id = (
-            event["player_id"]
-        )
+        player_id = event["player_id"]
 
         if event["name"] != "Unbekannt":
-            names[player_id] = (
-                event["name"]
-            )
+            names[player_id] = event["name"]
 
         if (
             event["buyer"]
@@ -2050,10 +2020,7 @@ def load_feed_transfers(
             sale_prices
         ):
             if index < len(buy_prices):
-                buy_price = (
-                    buy_prices[index]
-                )
-
+                buy_price = buy_prices[index]
                 known_price = True
             else:
                 buy_price = 0.0
@@ -2335,7 +2302,7 @@ def compute_own_bonus(
 
 
 # ---------------------------------------------------------
-# Tabellenformatierung
+# Liga-Tabellenformatierung
 # ---------------------------------------------------------
 
 def build_squad_label(
@@ -2425,6 +2392,73 @@ def apply_value_colors(
     )
 
 
+def get_header_background(column):
+    """Gibt die Gruppenfarbe eines Spaltenkopfes zurück."""
+    trend_columns = {
+        "Trend Start 11",
+        "Trend Trading",
+        "Trend gesamt",
+    }
+
+    budget_columns = {
+        "Budget",
+        "Nach Verkauf",
+        "Budget Spieltag",
+        "S11 Spieltag",
+    }
+
+    if column in trend_columns:
+        return LEAGUE_HEADER_TREND
+
+    if column in budget_columns:
+        return LEAGUE_HEADER_BUDGET
+
+    return LEAGUE_HEADER_MAIN
+
+
+def add_grouped_header_styles(
+    styled,
+    frame,
+):
+    """Färbt die Spaltenköpfe nach Gruppen."""
+    table_styles = []
+
+    for index, column in enumerate(
+        frame.columns
+    ):
+        background = get_header_background(
+            column
+        )
+
+        table_styles.append(
+            {
+                "selector": (
+                    "th.col_heading.level0."
+                    f"col{index}"
+                ),
+                "props": [
+                    (
+                        "background-color",
+                        background,
+                    ),
+                    (
+                        "color",
+                        "#3f4650",
+                    ),
+                    (
+                        "font-weight",
+                        "700",
+                    ),
+                ],
+            }
+        )
+
+    return styled.set_table_styles(
+        table_styles,
+        overwrite=False,
+    )
+
+
 def style_league_table(
     frame,
     lineup_counts=None,
@@ -2437,9 +2471,9 @@ def style_league_table(
             "Trend Start 11",
             "Trend Trading",
             "Trend gesamt",
-            "Kontostand",
+            "Budget",
             "Nach Verkauf",
-            "Am Spieltag",
+            "Budget Spieltag",
         ]
         if column in frame.columns
     ]
@@ -2458,6 +2492,11 @@ def style_league_table(
     styled = apply_value_colors(
         frame.style,
         signed_columns,
+    )
+
+    styled = add_grouped_header_styles(
+        styled,
+        frame,
     )
 
     if (
@@ -2533,6 +2572,112 @@ def style_trades_table(frame):
 
 
 # ---------------------------------------------------------
+# Sortierung der Spielertabelle
+# ---------------------------------------------------------
+
+def get_player_sort_state(columns):
+    """Liest die aktuelle Spielersortierung."""
+    default_column = "Gewinn gesamt"
+
+    try:
+        sort_column = st.query_params.get(
+            "player_sort",
+            default_column,
+        )
+
+        sort_direction = st.query_params.get(
+            "player_direction",
+            "desc",
+        )
+    except Exception:
+        sort_column = default_column
+        sort_direction = "desc"
+
+    if sort_column not in columns:
+        sort_column = default_column
+
+    if sort_direction not in [
+        "asc",
+        "desc",
+    ]:
+        sort_direction = "desc"
+
+    return sort_column, sort_direction
+
+
+def sort_player_frame(frame, columns):
+    """Sortiert die Spielertabelle nach dem Spaltenkopf."""
+    sort_column, sort_direction = (
+        get_player_sort_state(columns)
+    )
+
+    if sort_column not in frame.columns:
+        return (
+            frame.reset_index(drop=True),
+            sort_column,
+            sort_direction,
+        )
+
+    sorted_frame = frame.sort_values(
+        sort_column,
+        ascending=(
+            sort_direction == "asc"
+        ),
+        kind="stable",
+        na_position="last",
+    ).reset_index(drop=True)
+
+    return (
+        sorted_frame,
+        sort_column,
+        sort_direction,
+    )
+
+
+def player_header_link(
+    column,
+    active_column,
+    active_direction,
+):
+    """Baut einen anklickbaren Spaltenkopf."""
+    if column == active_column:
+        next_direction = (
+            "desc"
+            if active_direction == "asc"
+            else "asc"
+        )
+
+        arrow = (
+            " ▲"
+            if active_direction == "asc"
+            else " ▼"
+        )
+    else:
+        next_direction = "asc"
+        arrow = ""
+
+    link = (
+        "?player_sort="
+        f"{quote(column)}"
+        "&player_direction="
+        f"{next_direction}"
+    )
+
+    safe_column = escape(column)
+
+    return (
+        "<th>"
+        f"<a class='player-sort-link' "
+        f"href='{link}' target='_self' "
+        f"title='Nach {safe_column} sortieren'>"
+        f"{safe_column}"
+        f"<span class='sort-arrow'>{arrow}</span>"
+        "</a>"
+        "</th>"
+    )
+
+
+# ---------------------------------------------------------
 # Kadertabelle als HTML
 # ---------------------------------------------------------
 
@@ -2557,9 +2702,30 @@ SQUAD_STYLE = """
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.05em;
-    padding: 0.5rem 0.55rem;
+    padding: 0;
     border-bottom: 1px solid #e6e6e6;
     white-space: nowrap;
+}
+
+.player-sort-link {
+    display: block;
+    width: 100%;
+    box-sizing: border-box;
+    padding: 0.5rem 0.55rem;
+    color: #737373 !important;
+    text-decoration: none !important;
+    cursor: pointer;
+}
+
+.player-sort-link:hover {
+    color: #1c1c1c !important;
+    background-color: #f4f5f6;
+}
+
+.sort-arrow {
+    color: #1c1c1c;
+    font-size: 0.64rem;
+    letter-spacing: 0;
 }
 
 .squad-table td {
@@ -2636,9 +2802,12 @@ SQUAD_STYLE = """
 
 .squad-table.mobile th {
     font-size: 0.59rem;
-    padding: 0.35rem 0.3rem;
     white-space: normal;
     line-height: 1.2;
+}
+
+.squad-table.mobile .player-sort-link {
+    padding: 0.35rem 0.3rem;
 }
 
 .squad-table.mobile td {
@@ -2693,6 +2862,7 @@ SQUAD_STYLE = """
 def signed_cell_html(value):
     """Baut eine gefärbte HTML-Zelle."""
     number = to_number(value)
+
     text = format_signed_currency(
         value
     )
@@ -2720,10 +2890,16 @@ def render_squad_table(
     frame,
     columns,
     compact=False,
+    sort_column="Gewinn gesamt",
+    sort_direction="desc",
 ):
-    """Zeichnet die Kadertabelle."""
+    """Zeichnet die Kadertabelle mit Sortierköpfen."""
     header_cells = "".join(
-        f"<th>{escape(column)}</th>"
+        player_header_link(
+            column,
+            sort_column,
+            sort_direction,
+        )
         for column in columns
     )
 
@@ -3052,7 +3228,11 @@ if not st.session_state.get(
     "logged_in"
 ):
     _, login_column, _ = st.columns(
-        [1, 1.15, 1]
+        [
+            1,
+            1.15,
+            1,
+        ]
     )
 
     with login_column:
@@ -3125,11 +3305,10 @@ if not st.session_state.get(
                             "Login erfolgreich, aber "
                             "es wurde keine Liga erkannt."
                         )
+
                         st.stop()
 
-                    st.session_state["api"] = (
-                        api
-                    )
+                    st.session_state["api"] = api
 
                     st.session_state[
                         "leagues"
@@ -3226,11 +3405,11 @@ kpis_expanded = st.sidebar.checkbox(
 
 
 # ---------------------------------------------------------
-# Vereine und Spielplan laden
+# Vereine und Spielplan
 # ---------------------------------------------------------
 
 matches_key = (
-    f"team_matches_v6_{league_id}"
+    f"team_matches_v7_{league_id}"
 )
 
 if matches_key not in st.session_state:
@@ -3257,7 +3436,7 @@ next_matches = (
 
 
 # ---------------------------------------------------------
-# Kontostand laden
+# Kontostand und Spieltag
 # ---------------------------------------------------------
 
 budget_key = (
@@ -3266,7 +3445,7 @@ budget_key = (
 
 if budget_key not in st.session_state:
     with st.spinner(
-        "Kontostand wird geladen …"
+        "Budget wird geladen …"
     ):
         st.session_state[budget_key] = (
             load_real_budget(
@@ -3278,11 +3457,6 @@ if budget_key not in st.session_state:
 own_budget = (
     st.session_state[budget_key]
 )
-
-
-# ---------------------------------------------------------
-# Tage bis zum Spieltag
-# ---------------------------------------------------------
 
 matchday_key = (
     f"matchday_days_{league_id}"
@@ -3357,8 +3531,7 @@ if compact:
         f"<div style='"
         f"font-size:15px;"
         f"font-weight:650;"
-        f"padding-bottom:5px;"
-        f"'>"
+        f"padding-bottom:5px;'>"
         f"⚽ {escape(league_name)}"
         f"</div>",
         unsafe_allow_html=True,
@@ -3393,14 +3566,8 @@ with manager_nav:
         ),
         use_container_width=True,
     ):
-        st.session_state["view"] = (
-            "Manager"
-        )
-
-        st.session_state[
-            "came_from_league"
-        ] = False
-
+        st.session_state["view"] = "Manager"
+        st.session_state["came_from_league"] = False
         st.rerun()
 
 with league_nav:
@@ -3417,14 +3584,8 @@ with league_nav:
         ),
         use_container_width=True,
     ):
-        st.session_state["view"] = (
-            "Liga"
-        )
-
-        st.session_state[
-            "came_from_league"
-        ] = False
-
+        st.session_state["view"] = "Liga"
+        st.session_state["came_from_league"] = False
         st.rerun()
 
 with market_nav:
@@ -3441,14 +3602,8 @@ with market_nav:
         ),
         use_container_width=True,
     ):
-        st.session_state["view"] = (
-            "Transfermarkt"
-        )
-
-        st.session_state[
-            "came_from_league"
-        ] = False
-
+        st.session_state["view"] = "Transfermarkt"
+        st.session_state["came_from_league"] = False
         st.rerun()
 
 view = st.session_state["view"]
@@ -3469,7 +3624,7 @@ if view == "Transfermarkt":
 
 
 # ---------------------------------------------------------
-# Managerliste laden
+# Managerliste
 # ---------------------------------------------------------
 
 managers = []
@@ -3494,8 +3649,7 @@ for source in ranking_sources:
 
 if not managers:
     st.error(
-        "Es konnten keine Manager "
-        "geladen werden."
+        "Es konnten keine Manager geladen werden."
     )
 
     if ranking_errors:
@@ -3519,11 +3673,9 @@ own_manager_id = (
     )
 )
 
-managers = (
-    order_managers_own_first(
-        managers,
-        own_manager_id,
-    )
+managers = order_managers_own_first(
+    managers,
+    own_manager_id,
 )
 
 manager_lookup = {
@@ -3537,7 +3689,7 @@ manager_ids = list(
 
 
 # ---------------------------------------------------------
-# Budget-Einstellungen in der Seitenleiste
+# Budget-Einstellungen
 # ---------------------------------------------------------
 
 st.sidebar.markdown("---")
@@ -3576,7 +3728,7 @@ if st.sidebar.button(
     )
 
     st.session_state.pop(
-        f"league_rows_v11_{league_id}",
+        f"league_rows_v12_{league_id}",
         None,
     )
 
@@ -3613,7 +3765,7 @@ if own_bonus_info is not None:
     bonus_hint = (
         "Vorschlag aus der Differenz "
         "zwischen berechnetem und "
-        "tatsächlichem Kontostand."
+        "tatsächlichem Budget."
     )
 else:
     suggested_bonus = 0.0
@@ -3665,7 +3817,7 @@ if own_bonus_info is not None:
     )
 
     st.sidebar.caption(
-        "Eigener Kontostand: "
+        "Eigenes Budget: "
         + format_currency(
             own_bonus_info["real"]
         )
@@ -3712,7 +3864,7 @@ if view == "Liga":
         )
 
     cache_key = (
-        f"league_rows_v11_{league_id}"
+        f"league_rows_v12_{league_id}"
     )
 
     if st.button(
@@ -3738,16 +3890,12 @@ if view == "Liga":
         for index, manager in enumerate(
             managers
         ):
-            manager_id = (
-                get_manager_id(
-                    manager
-                )
+            manager_id = get_manager_id(
+                manager
             )
 
-            manager_name = (
-                get_manager_name(
-                    manager
-                )
+            manager_name = get_manager_name(
+                manager
             )
 
             manager_players, _ = (
@@ -3758,10 +3906,8 @@ if view == "Liga":
                 )
             )
 
-            manager_stats = (
-                compute_stats(
-                    manager_players
-                )
+            manager_stats = compute_stats(
+                manager_players
             )
 
             manager_lineup_matchday_value = (
@@ -3771,12 +3917,10 @@ if view == "Liga":
                 )
             )
 
-            realized = (
-                load_realized_profit(
-                    api,
-                    league_id,
-                    manager_id,
-                )
+            realized = load_realized_profit(
+                api,
+                league_id,
+                manager_id,
             )
 
             rows.append(
@@ -3861,7 +4005,7 @@ if view == "Liga":
         st.session_state[cache_key]
     )
 
-    league_frame["Kontostand"] = (
+    league_frame["Budget"] = (
         BASE_BUDGET
         + bonus
         + league_frame[
@@ -3873,15 +4017,15 @@ if view == "Liga":
     if own_budget is not None:
         league_frame.loc[
             league_frame["Ich"],
-            "Kontostand",
+            "Budget",
         ] = own_budget
 
     league_frame["Nach Verkauf"] = (
-        league_frame["Kontostand"]
+        league_frame["Budget"]
         + league_frame["Trading"]
     )
 
-    league_frame["Am Spieltag"] = (
+    league_frame["Budget Spieltag"] = (
         league_frame["Nach Verkauf"]
         + league_frame[
             "Trend Trading"
@@ -3908,8 +4052,9 @@ if view == "Liga":
             "Kaderwert",
             "Gewinn gesamt",
             "Trend gesamt",
-            "Kontostand",
-            "Am Spieltag",
+            "Budget",
+            "Nach Verkauf",
+            "Budget Spieltag",
             "S11 Spieltag",
         ]
     else:
@@ -3923,9 +4068,9 @@ if view == "Liga":
             "Trend Start 11",
             "Trend Trading",
             "Trend gesamt",
-            "Kontostand",
+            "Budget",
             "Nach Verkauf",
-            "Am Spieltag",
+            "Budget Spieltag",
             "S11 Spieltag",
         ]
 
@@ -4016,6 +4161,12 @@ if view == "Liga":
         )
 
     st.caption(
+        "Die unterschiedlichen Farben der "
+        "Spaltenköpfe gruppieren Mannschaft, "
+        "Trends und Budgetwerte."
+    )
+
+    st.caption(
         "Kader zeigt die Gesamtzahl der Spieler. "
         "Wenn die Startelf nicht genau 11 Spieler "
         "enthält, wird ihre Anzahl in Klammern "
@@ -4025,16 +4176,14 @@ if view == "Liga":
     st.caption(
         "S11 Spieltag zeigt den voraussichtlichen "
         "Marktwert der aktuellen Startelf am nächsten "
-        "Spieltag. Berechnet wird der aktuelle "
-        "Startelf-Marktwert zuzüglich des täglichen "
-        "Startelf-Trends bis zum Spieltag."
+        "Spieltag."
     )
 
     if own_budget is not None:
         st.caption(
-            "Beim eigenen Manager wird der "
-            "tatsächliche Kontostand verwendet. "
-            "Die anderen Kontostände werden mit "
+            "Beim eigenen Manager wird das "
+            "tatsächliche Budget verwendet. "
+            "Die anderen Budgets werden mit "
             f"{format_currency(BASE_BUDGET)} Grundwert, "
             f"{format_currency(bonus)} Bonus und "
             f"{days_to_matchday} Tagen bis zum "
@@ -4042,7 +4191,7 @@ if view == "Liga":
         )
     else:
         st.caption(
-            "Die Kontostände werden mit "
+            "Die Budgets werden mit "
             f"{format_currency(BASE_BUDGET)} Grundwert, "
             f"{format_currency(bonus)} Bonus und "
             f"{days_to_matchday} Tagen bis zum "
@@ -4110,9 +4259,9 @@ if st.session_state.get(
             "came_from_league"
         ] = False
 
-        st.session_state["view"] = (
-            "Liga"
-        )
+        st.session_state[
+            "view"
+        ] = "Liga"
 
         st.rerun()
 
@@ -4186,7 +4335,7 @@ viewing_self = is_own_manager(
 
 
 # ---------------------------------------------------------
-# Kader und Gewinne laden
+# Kader und Gewinne
 # ---------------------------------------------------------
 
 with st.spinner(
@@ -4496,13 +4645,13 @@ with st.expander(
         budget_title,
         [
             (
-                "Kontostand",
+                "Budget",
                 format_signed_currency(
                     budget["balance"]
                 ),
                 [
                     (
-                        "Aktueller Kontostand"
+                        "Aktuelles Budget"
                         if viewing_self
                         else (
                             f"{format_currency(BASE_BUDGET)} "
@@ -4543,7 +4692,7 @@ with st.expander(
                 ),
             ),
             (
-                "Am Spieltag",
+                "Budget Spieltag",
                 format_signed_currency(
                     budget[
                         "at_matchday"
@@ -4775,20 +4924,27 @@ elif players:
         "Trend 24 Stunden",
     ]
 
-    player_frame = sort_controls(
+    (
+        player_frame,
+        player_sort_column,
+        player_sort_direction,
+    ) = sort_player_frame(
         player_frame,
         player_columns,
-        key="kader",
-        default_column=(
-            "Gewinn gesamt"
-        ),
-        compact=compact,
     )
 
     render_squad_table(
         player_frame,
         player_columns,
         compact=compact,
+        sort_column=player_sort_column,
+        sort_direction=player_sort_direction,
+    )
+
+    st.caption(
+        "Klicke auf einen Spaltenkopf, um die "
+        "Spieler zu sortieren. Ein weiterer Klick "
+        "kehrt die Reihenfolge um."
     )
 
     st.caption(
