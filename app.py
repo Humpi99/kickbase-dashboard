@@ -3514,7 +3514,7 @@ if st.sidebar.button(
     )
 
     st.session_state.pop(
-    f"league_rows_v15_{league_id}",
+    f"league_rows_v16_{league_id}",
     None,
     )
 
@@ -3613,29 +3613,242 @@ if st.sidebar.button(
 # Liga-Ansicht
 # ---------------------------------------------------------
 
-def get_manager_points(manager):
-    """Liest die Gesamtpunkte eines Managers aus der Ligawertung."""
-    return to_number(
-        first_value(
-            manager,
-            [
-                "shp",
-                "points",
-                "pt",
-                "pts",
-                "totalPoints",
-                "total_points",
-                "seasonPoints",
-                "season_points",
-                "score",
-                "scorePoints",
-                "sp",
-                "spt",
-                "tp",
-                "p",
-            ],
+def contains_current_matchday(value, depth=0):
+    """Prüft, ob ein Saisonblock den aktuellen Spieltag enthält."""
+    if depth > 8:
+        return False
+
+    if isinstance(value, dict):
+        if value.get("cur") is True:
+            return True
+
+        for nested_value in value.values():
+            if contains_current_matchday(
+                nested_value,
+                depth + 1,
+            ):
+                return True
+
+    elif isinstance(value, list):
+        for item in value:
+            if contains_current_matchday(
+                item,
+                depth + 1,
+            ):
+                return True
+
+    return False
+
+
+def collect_manager_seasons(value, depth=0):
+    """Sammelt Saisonblöcke mit Managerpunkten."""
+    seasons = []
+
+    if depth > 8:
+        return seasons
+
+    if isinstance(value, dict):
+        season_name = value.get("sn")
+        season_id = value.get("sid")
+        accumulated_points = to_number(
+            value.get("ap")
         )
+        total_points = to_number(
+            value.get("tp")
+        )
+
+        is_season_block = (
+            (
+                season_name is not None
+                or season_id is not None
+            )
+            and (
+                accumulated_points is not None
+                or total_points is not None
+            )
+        )
+
+        if is_season_block:
+            seasons.append(
+                {
+                    "season_name": str(
+                        season_name or ""
+                    ),
+                    "season_id": season_id,
+                    "points": (
+                        accumulated_points
+                        if accumulated_points is not None
+                        else total_points
+                    ),
+                    "current_matchday": (
+                        contains_current_matchday(
+                            value.get("it", [])
+                        )
+                    ),
+                }
+            )
+
+        for nested_value in value.values():
+            seasons.extend(
+                collect_manager_seasons(
+                    nested_value,
+                    depth + 1,
+                )
+            )
+
+    elif isinstance(value, list):
+        for item in value:
+            seasons.extend(
+                collect_manager_seasons(
+                    item,
+                    depth + 1,
+                )
+            )
+
+    return seasons
+
+
+def choose_current_season_points(seasons):
+    """Wählt die Punkte der aktuellen Saison aus."""
+    if not seasons:
+        return None
+
+    now = datetime.now()
+    season_start_year = (
+        now.year
+        if now.month >= 7
+        else now.year - 1
     )
+
+    expected_season_name = (
+        f"{season_start_year}/"
+        f"{season_start_year + 1}"
+    )
+
+    matching_seasons = [
+        season
+        for season in seasons
+        if season["season_name"]
+        == expected_season_name
+    ]
+
+    if matching_seasons:
+        return matching_seasons[0]["points"]
+
+    current_matchday_seasons = [
+        season
+        for season in seasons
+        if season["current_matchday"]
+    ]
+
+    if current_matchday_seasons:
+        return current_matchday_seasons[0][
+            "points"
+        ]
+
+    def season_sort_value(season):
+        season_id = to_number(
+            season.get("season_id")
+        )
+
+        return (
+            season_id
+            if season_id is not None
+            else -1
+        )
+
+    newest_season = max(
+        seasons,
+        key=season_sort_value,
+    )
+
+    return newest_season["points"]
+
+
+def get_manager_points(
+    api,
+    league_id,
+    manager_id,
+    ranking_manager=None,
+):
+    """Lädt die Punkte aus dem aktuellen Saisonblock."""
+    cache_key = (
+        f"manager_points_v1_"
+        f"{league_id}_{manager_id}"
+    )
+
+    if cache_key in st.session_state:
+        return st.session_state[cache_key]
+
+    base = (
+        f"/v4/leagues/{league_id}"
+        f"/managers/{manager_id}"
+    )
+
+    user_base = (
+        f"/v4/leagues/{league_id}"
+        f"/users/{manager_id}"
+    )
+
+    paths = [
+        f"{base}/performance",
+        f"{base}/dashboard",
+        f"{base}/profile",
+        f"{base}/points",
+        f"{base}/history",
+        base,
+        f"{user_base}/stats",
+        f"{user_base}/profile",
+    ]
+
+    manager_points = None
+
+    for path in paths:
+        try:
+            data = api.get(path)
+        except Exception:
+            continue
+
+        seasons = collect_manager_seasons(
+            data
+        )
+
+        manager_points = (
+            choose_current_season_points(
+                seasons
+            )
+        )
+
+        if manager_points is not None:
+            break
+
+    if (
+        manager_points is None
+        and isinstance(
+            ranking_manager,
+            dict,
+        )
+    ):
+        manager_points = to_number(
+            first_value(
+                ranking_manager,
+                [
+                    "ap",
+                    "tp",
+                    "points",
+                    "pt",
+                    "pts",
+                    "totalPoints",
+                    "seasonPoints",
+                ],
+            )
+        )
+
+    st.session_state[cache_key] = (
+        manager_points
+    )
+
+    return manager_points
 
 def league_header_class(column):
     """Bestimmt die Farbgruppe eines Spaltenkopfes."""
@@ -4033,10 +4246,10 @@ if view == "Liga":
         )
 
     cache_key = (
-        f"league_rows_v15_{league_id}"
+        f"league_rows_v16_{league_id}"
     )
 
-    if st.button(
+     if st.button(
         "Daten neu laden",
         key="reload_league_data",
     ):
@@ -4044,6 +4257,19 @@ if view == "Liga":
             cache_key,
             None,
         )
+
+        for manager in managers:
+            manager_id = get_manager_id(
+                manager
+            )
+
+            st.session_state.pop(
+                (
+                    f"manager_points_v1_"
+                    f"{league_id}_{manager_id}"
+                ),
+                None,
+            )
 
         st.rerun()
 
@@ -4068,7 +4294,10 @@ if view == "Liga":
 
             manager_points = (
                 get_manager_points(
-                    manager
+                    api,
+                    league_id,
+                    manager_id,
+                    manager,
                 )
             )
 
