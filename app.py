@@ -21,12 +21,6 @@ from transfermarkt import render_transfer_market
 # Konstanten
 # ---------------------------------------------------------
 
-COLOR_POSITIVE = "#12a150"
-COLOR_NEGATIVE = "#e03131"
-COLOR_NEUTRAL = "#1c1c1c"
-COLOR_LABEL = "#8a8a8a"
-COLOR_LINE = "#e6e6e6"
-
 BASE_BUDGET = 150_000_000
 REQUIRED_LINEUP_SIZE = 11
 
@@ -36,10 +30,6 @@ TEAM_LOGO_SIZE = 17
 PLAYER_PHOTO_SIZE = 24
 TEAM_LOGO_SIZE_MOBILE = 14
 PLAYER_PHOTO_SIZE_MOBILE = 20
-
-LEAGUE_HEADER_MAIN = "#f2f4f7"
-LEAGUE_HEADER_TREND = "#eaf6ef"
-LEAGUE_HEADER_BUDGET = "#fff3e3"
 
 
 # ---------------------------------------------------------
@@ -237,7 +227,7 @@ def sort_frame(
     default_column,
     compact=False,
 ):
-    """Sortiert eine Tabelle über stabile Auswahlfelder."""
+    """Sortiert eine Tabelle über Auswahlfelder."""
     available = [
         column
         for column in columns
@@ -759,7 +749,11 @@ def get_points_from_dictionary(data):
     return total, average
 
 
-def find_player_points(data, player_id=None, depth=0):
+def find_player_points(
+    data,
+    player_id=None,
+    depth=0,
+):
     if depth > 8:
         return None, None
 
@@ -821,7 +815,7 @@ def load_player_points(api, league_id, player):
         return total, average
 
     cache_key = (
-        f"player_points_v4_{league_id}_{player_id}"
+        f"player_points_v5_{league_id}_{player_id}"
     )
 
     if cache_key in st.session_state:
@@ -1033,7 +1027,7 @@ def load_manager_points(
     manager_id,
 ):
     cache_key = (
-        f"manager_points_v3_"
+        f"manager_points_v4_"
         f"{league_id}_{manager_id}"
     )
 
@@ -1991,7 +1985,7 @@ def render_squad_table(
     columns,
     compact,
 ):
-    """Zeigt die bereits sortierte Spielerliste ohne Links."""
+    """Zeigt die bereits sortierte Spielerliste."""
     headers = "".join(
         f"<th>{escape(column)}</th>"
         for column in columns
@@ -2133,7 +2127,7 @@ def render_league_table(
     columns,
     compact,
 ):
-    """Zeigt die Liga mit farbigen Spaltenköpfen ohne Links."""
+    """Zeigt die Liga mit farbigen Spaltenköpfen."""
     headers = "".join(
         (
             f"<th class='{league_header_class(column)}'>"
@@ -2241,12 +2235,7 @@ def render_league_table(
 # ---------------------------------------------------------
 
 def kpi_block(title, entries, compact):
-    colors = {
-        "neutral": COLOR_NEUTRAL,
-        "plus": COLOR_POSITIVE,
-        "minus": COLOR_NEGATIVE,
-    }
-
+    """Zeigt einen KPI-Block mit Darkmode-Farben."""
     value_size = 19 if compact else 24
 
     st.markdown(
@@ -2269,12 +2258,20 @@ def kpi_block(title, entries, compact):
             if note
         )
 
+        tone_class = {
+            "plus": "kpi-value-plus",
+            "minus": "kpi-value-minus",
+            "neutral": "kpi-value-neutral",
+        }.get(
+            tone,
+            "kpi-value-neutral",
+        )
+
         column.markdown(
             "<div class='kpi-card'>"
             f"<div class='kpi-label'>{escape(label)}</div>"
-            f"<div class='kpi-value' "
-            f"style='font-size:{value_size}px;"
-            f"color:{colors.get(tone, COLOR_NEUTRAL)};'>"
+            f"<div class='kpi-value {tone_class}' "
+            f"style='font-size:{value_size}px;'>"
             f"{value}"
             "</div>"
             f"{notes_html}"
@@ -2284,35 +2281,63 @@ def kpi_block(title, entries, compact):
 
 
 # ---------------------------------------------------------
-# CSS
+# CSS mit Lightmode und Darkmode
 # ---------------------------------------------------------
 
 APP_STYLE = """
 <style>
+:root {
+    --kb-text: #1c1c1c;
+    --kb-text-muted: #6f7378;
+    --kb-border: #dfe2e6;
+    --kb-row-border: #eceef0;
+    --kb-table-bg: #ffffff;
+    --kb-row-hover: #f5f7f8;
+    --kb-trading-bg: #f7f8f9;
+    --kb-trading-text: #767b80;
+    --kb-player-photo-bg: #eef0f2;
+
+    --kb-positive: #0b8f43;
+    --kb-negative: #d32929;
+
+    --kb-header-main-bg: #e4e8ed;
+    --kb-header-main-text: #252a30;
+
+    --kb-header-trend-bg: #d7efe0;
+    --kb-header-trend-text: #164d2d;
+
+    --kb-header-budget-bg: #fbe3c4;
+    --kb-header-budget-text: #6b3c00;
+
+    --kb-login-bg: #f7f8f9;
+    --kb-login-text: #555b61;
+}
+
 .login-heading {
     text-align: center;
     margin-top: 3rem;
     font-size: 2rem;
     font-weight: 750;
+    color: var(--kb-text);
 }
 
 .login-subheading {
     text-align: center;
-    color: #777777;
+    color: var(--kb-text-muted);
     margin-bottom: 1.4rem;
 }
 
 .login-security {
     padding: 0.8rem 1rem;
-    border: 1px solid #e6e6e6;
+    border: 1px solid var(--kb-border);
     border-radius: 10px;
-    background: #fafafa;
-    color: #666666;
+    background: var(--kb-login-bg);
+    color: var(--kb-login-text);
     margin-top: 0.8rem;
 }
 
 .top-nav-label {
-    color: #8a8a8a;
+    color: var(--kb-text-muted);
     font-size: 0.72rem;
     font-weight: 600;
     letter-spacing: 0.08em;
@@ -2324,12 +2349,17 @@ APP_STYLE = """
     width: 100%;
     overflow-x: auto;
     margin: 0.5rem 0 0.7rem;
+    border: 1px solid var(--kb-border);
+    border-radius: 8px;
+    background: var(--kb-table-bg);
 }
 
 .squad-table,
 .league-table {
     width: 100%;
     border-collapse: collapse;
+    color: var(--kb-text);
+    background: var(--kb-table-bg);
     font-size: 0.82rem;
 }
 
@@ -2339,7 +2369,6 @@ APP_STYLE = """
 
 .league-table {
     min-width: 1380px;
-    border: 1px solid #e6e6e6;
 }
 
 .squad-table.mobile {
@@ -2356,69 +2385,100 @@ APP_STYLE = """
 .league-table th {
     text-align: left;
     padding: 0.6rem 0.55rem;
-    border-bottom: 1px solid #dedede;
+    border-right: 1px solid var(--kb-border);
+    border-bottom: 1px solid var(--kb-border);
     font-size: 0.68rem;
-    font-weight: 700;
+    font-weight: 750;
     text-transform: uppercase;
     white-space: nowrap;
 }
 
+.squad-table th:last-child,
+.league-table th:last-child,
+.squad-table td:last-child,
+.league-table td:last-child {
+    border-right: none;
+}
+
 .squad-table th {
-    background: #f2f4f7;
-    color: #555555;
+    color: var(--kb-header-main-text);
+    background: var(--kb-header-main-bg);
 }
 
 .squad-table td,
 .league-table td {
     padding: 0.5rem 0.55rem;
-    border-bottom: 1px solid #eeeeee;
+    border-right: 1px solid var(--kb-row-border);
+    border-bottom: 1px solid var(--kb-row-border);
+    color: var(--kb-text);
+    background: var(--kb-table-bg);
     white-space: nowrap;
     vertical-align: middle;
 }
 
-.squad-table tr.trading td {
-    color: #9a9a9a;
-    background: #fafafa;
+.squad-table tbody tr:last-child td,
+.league-table tbody tr:last-child td {
+    border-bottom: none;
 }
 
+.squad-table tbody tr:hover td,
 .league-table tbody tr:hover td {
-    background: #fafafa;
+    background: var(--kb-row-hover);
+}
+
+.squad-table tr.trading td {
+    color: var(--kb-trading-text);
+    background: var(--kb-trading-bg);
+}
+
+.squad-table tr.trading:hover td {
+    background: var(--kb-row-hover);
 }
 
 .league-header-main {
-    background: #f2f4f7;
+    color: var(--kb-header-main-text);
+    background: var(--kb-header-main-bg);
 }
 
 .league-header-trend {
-    background: #eaf6ef;
+    color: var(--kb-header-trend-text);
+    background: var(--kb-header-trend-bg);
 }
 
 .league-header-budget {
-    background: #fff3e3;
+    color: var(--kb-header-budget-text);
+    background: var(--kb-header-budget-bg);
 }
 
-.manager-name {
-    color: #1c1c1c;
+.manager-name,
+.player-name {
+    color: var(--kb-text);
     font-weight: 700;
 }
 
 .squad-warning {
-    color: #e03131;
+    color: var(--kb-negative);
+    font-weight: 750;
+}
+
+.value-plus,
+.kpi-value-plus {
+    color: var(--kb-positive);
     font-weight: 700;
 }
 
-.value-plus {
-    color: #12a150;
-    font-weight: 600;
+.value-minus,
+.kpi-value-minus {
+    color: var(--kb-negative);
+    font-weight: 700;
 }
 
-.value-minus {
-    color: #e03131;
-    font-weight: 600;
+.kpi-value-neutral {
+    color: var(--kb-text);
 }
 
 .points-average {
-    color: #8a8a8a;
+    color: var(--kb-text-muted);
     font-size: 0.82em;
 }
 
@@ -2431,15 +2491,11 @@ APP_STYLE = """
 .player-photo {
     object-fit: cover;
     border-radius: 50%;
-    background: #f0f0f0;
+    background: var(--kb-player-photo-bg);
 }
 
 .team-logo {
     object-fit: contain;
-}
-
-.player-name {
-    font-weight: 600;
 }
 
 .match-entry {
@@ -2447,17 +2503,18 @@ APP_STYLE = """
     align-items: center;
     gap: 0.2rem;
     margin-right: 0.6rem;
+    color: var(--kb-text);
 }
 
 .kpi-title {
-    border-top: 1px solid #e6e6e6;
+    border-top: 1px solid var(--kb-border);
     padding-top: 10px;
     margin-top: 18px;
     font-size: 12px;
-    font-weight: 500;
+    font-weight: 600;
     letter-spacing: 0.08em;
     text-transform: uppercase;
-    color: #8a8a8a;
+    color: var(--kb-text-muted);
 }
 
 .kpi-card {
@@ -2467,7 +2524,7 @@ APP_STYLE = """
 .kpi-label,
 .kpi-note {
     font-size: 12px;
-    color: #8a8a8a;
+    color: var(--kb-text-muted);
 }
 
 .kpi-note {
@@ -2477,6 +2534,62 @@ APP_STYLE = """
 .kpi-value {
     font-weight: 700;
     padding: 2px 0 4px;
+}
+
+@media (prefers-color-scheme: dark) {
+    :root {
+        --kb-text: #f1f3f5;
+        --kb-text-muted: #b7bdc4;
+        --kb-border: #4a5058;
+        --kb-row-border: #383e46;
+        --kb-table-bg: #171b20;
+        --kb-row-hover: #2a3038;
+        --kb-trading-bg: #20252b;
+        --kb-trading-text: #aeb5bd;
+        --kb-player-photo-bg: #30363d;
+
+        --kb-positive: #52d889;
+        --kb-negative: #ff7474;
+
+        --kb-header-main-bg: #3b434d;
+        --kb-header-main-text: #f5f7f9;
+
+        --kb-header-trend-bg: #234c38;
+        --kb-header-trend-text: #d7f8e4;
+
+        --kb-header-budget-bg: #654719;
+        --kb-header-budget-text: #fff0ce;
+
+        --kb-login-bg: #20252b;
+        --kb-login-text: #d8dde3;
+    }
+}
+
+[data-theme="dark"] {
+    --kb-text: #f1f3f5;
+    --kb-text-muted: #b7bdc4;
+    --kb-border: #4a5058;
+    --kb-row-border: #383e46;
+    --kb-table-bg: #171b20;
+    --kb-row-hover: #2a3038;
+    --kb-trading-bg: #20252b;
+    --kb-trading-text: #aeb5bd;
+    --kb-player-photo-bg: #30363d;
+
+    --kb-positive: #52d889;
+    --kb-negative: #ff7474;
+
+    --kb-header-main-bg: #3b434d;
+    --kb-header-main-text: #f5f7f9;
+
+    --kb-header-trend-bg: #234c38;
+    --kb-header-trend-text: #d7f8e4;
+
+    --kb-header-budget-bg: #654719;
+    --kb-header-budget-text: #fff0ce;
+
+    --kb-login-bg: #20252b;
+    --kb-login-text: #d8dde3;
 }
 
 @media (max-width: 640px) {
@@ -2661,7 +2774,7 @@ player_photo_size = (
 # ---------------------------------------------------------
 
 matches_key = (
-    f"team_matches_v9_{league_id}"
+    f"team_matches_v10_{league_id}"
 )
 
 if matches_key not in st.session_state:
@@ -2938,7 +3051,7 @@ if st.sidebar.button(
             state_key == bonus_info_key
             or state_key == budget_key
             or state_key.startswith(
-                f"league_rows_v18_{league_id}"
+                f"league_rows_v19_{league_id}"
             )
         ):
             st.session_state.pop(
@@ -2989,7 +3102,7 @@ if view == "Liga":
     st.subheader("Liga-Vergleich")
 
     cache_key = (
-        f"league_rows_v18_{league_id}"
+        f"league_rows_v19_{league_id}"
     )
 
     if st.button(
@@ -3004,7 +3117,7 @@ if view == "Liga":
         for manager_id in manager_ids:
             st.session_state.pop(
                 (
-                    f"manager_points_v3_"
+                    f"manager_points_v4_"
                     f"{league_id}_{manager_id}"
                 ),
                 None,
@@ -3182,8 +3295,8 @@ if view == "Liga":
 
     st.caption(
         "Hellgrau: Mannschaftswerte. "
-        "Hellgrün: Trends. "
-        "Hellorange: Budget und Prognosen."
+        "Grün: Trends. "
+        "Orange: Budget und Prognosen."
     )
 
     st.markdown("#### Manager öffnen")
