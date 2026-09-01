@@ -4245,11 +4245,11 @@ if view == "Liga":
             "dessen Kader und Kennzahlen zu öffnen."
         )
 
-    cache_key = (
+     cache_key = (
         f"league_rows_v16_{league_id}"
     )
 
-     if st.button(
+    if st.button(
         "Daten neu laden",
         key="reload_league_data",
     ):
@@ -5354,7 +5354,7 @@ if not compact:
             f"{len(next_matches)}"
         )
 
-        if st.button(
+    if st.button(
             "Vereine und Spielplan neu laden"
         ):
             st.session_state.pop(
@@ -5404,7 +5404,7 @@ if not compact:
             + ("Ja" if viewing_self else "Nein")
         )
 
-        if st.button("Manager-Daten laden"):
+    if st.button("Manager-Daten laden"):
             with st.spinner(
                 "Zusätzliche Daten "
                 "werden geladen …"
