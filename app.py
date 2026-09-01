@@ -853,11 +853,9 @@ def load_player_points(api, league_id, player):
         except Exception:
             continue
 
-        found_total, found_average = (
-            find_player_points(
-                details,
-                player_id,
-            )
+        found_total, found_average = find_player_points(
+            details,
+            player_id,
         )
 
         if total is None:
@@ -898,6 +896,49 @@ def points_cell_html(total, average):
 # ---------------------------------------------------------
 # Managerpunkte und Spieltage
 # ---------------------------------------------------------
+
+def parse_any_date(value):
+    if value is None or isinstance(value, bool):
+        return None
+
+    if isinstance(value, str):
+        try:
+            parsed = datetime.fromisoformat(
+                value.replace("Z", "+00:00")
+            )
+
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(
+                    tzinfo=timezone.utc
+                )
+
+            return parsed
+        except ValueError:
+            pass
+
+    number = to_number(value)
+
+    if number is None:
+        return None
+
+    try:
+        if number > 10_000_000_000:
+            number /= 1000
+
+        if number > 1_000_000_000:
+            return datetime.fromtimestamp(
+                number,
+                tz=timezone.utc,
+            )
+    except (
+        ValueError,
+        OSError,
+        OverflowError,
+    ):
+        pass
+
+    return None
+
 
 def is_played_matchday(matchday):
     """Prüft, ob ein Spieltag bereits gespielt wurde."""
@@ -1165,18 +1206,6 @@ def load_manager_point_stats(
     st.session_state[cache_key] = result
 
     return result
-
-
-def load_manager_points(
-    api,
-    league_id,
-    manager_id,
-):
-    return load_manager_point_stats(
-        api,
-        league_id,
-        manager_id,
-    )["points"]
 
 
 # ---------------------------------------------------------
@@ -1449,49 +1478,6 @@ def image_html(
         f"class='{css_class}' "
         f"style='height:{size}px;width:{size}px;' />"
     )
-
-
-def parse_any_date(value):
-    if value is None or isinstance(value, bool):
-        return None
-
-    if isinstance(value, str):
-        try:
-            parsed = datetime.fromisoformat(
-                value.replace("Z", "+00:00")
-            )
-
-            if parsed.tzinfo is None:
-                parsed = parsed.replace(
-                    tzinfo=timezone.utc
-                )
-
-            return parsed
-        except ValueError:
-            pass
-
-    number = to_number(value)
-
-    if number is None:
-        return None
-
-    try:
-        if number > 10_000_000_000:
-            number /= 1000
-
-        if number > 1_000_000_000:
-            return datetime.fromtimestamp(
-                number,
-                tz=timezone.utc,
-            )
-    except (
-        ValueError,
-        OSError,
-        OverflowError,
-    ):
-        pass
-
-    return None
 
 
 def extract_matches(sources):
@@ -2398,20 +2384,22 @@ def kpi_block(title, entries, compact):
 APP_STYLE = """
 <style>
 :root {
+    color-scheme: light;
+
     --kb-text: #1c1c1c;
-    --kb-muted: #767b80;
-    --kb-border: #e4e6e8;
-    --kb-row-border: #eff0f2;
+    --kb-muted: #686e74;
+    --kb-border: #e0e3e6;
+    --kb-row-border: #eceef0;
     --kb-table-bg: #ffffff;
-    --kb-hover-bg: #f7f8f9;
-    --kb-trading-bg: #fbfbfc;
-    --kb-trading-text: #92979c;
+    --kb-hover-bg: #f5f7f8;
+    --kb-trading-bg: #fafbfc;
+    --kb-trading-text: #747a80;
 
     --kb-positive: #0b8f43;
     --kb-negative: #d32929;
 
     --kb-main-header-bg: #f2f4f7;
-    --kb-main-header-text: #3f4650;
+    --kb-main-header-text: #30363d;
 
     --kb-trend-header-bg: #eaf6ef;
     --kb-trend-header-text: #225c38;
@@ -2646,37 +2634,15 @@ APP_STYLE = """
     font-weight: 700;
 }
 
-@media (prefers-color-scheme: dark) {
-    :root {
-        --kb-text: #ffffff;
-        --kb-muted: #c5cad0;
-        --kb-border: #464c54;
-        --kb-row-border: #353b43;
-        --kb-table-bg: #171b20;
-        --kb-hover-bg: #292f36;
-        --kb-trading-bg: #20252b;
-        --kb-trading-text: #b0b6bd;
-
-        --kb-positive: #52d889;
-        --kb-negative: #ff7474;
-
-        --kb-main-header-bg: #3b434d;
-        --kb-main-header-text: #ffffff;
-
-        --kb-trend-header-bg: #234c38;
-        --kb-trend-header-text: #e2f9ea;
-
-        --kb-budget-header-bg: #654719;
-        --kb-budget-header-text: #fff2d6;
-
-        --kb-login-bg: #20252b;
-        --kb-photo-bg: #30363d;
-    }
-}
-
+/*
+Nur der tatsächlich ausgewählte Streamlit-Darkmode
+aktiviert die dunklen Farben.
+*/
 html[data-theme="dark"],
 body[data-theme="dark"],
 [data-theme="dark"] {
+    color-scheme: dark;
+
     --kb-text: #ffffff;
     --kb-muted: #c5cad0;
     --kb-border: #464c54;
@@ -3562,7 +3528,12 @@ if players:
                 "average": player_average_points,
             }
 
-            if player_average_points is not None:
+            # Für die Spieler-Ø Summe werden nur
+            # Spieler der aktuellen Start 11 berücksichtigt.
+            if (
+                is_in_lineup(player)
+                and player_average_points is not None
+            ):
                 player_average_sum += (
                     player_average_points
                 )
@@ -3720,7 +3691,7 @@ with st.expander(
                 "neutral",
             ),
             (
-                "Spieler-Ø Summe",
+                "S11 Spieler-Ø Summe",
                 format_average_points(
                     player_average_sum
                 ),
@@ -3728,7 +3699,7 @@ with st.expander(
                     (
                         f"Summe aus "
                         f"{player_average_count} "
-                        "Spielerdurchschnitten"
+                        "S11-Spielerdurchschnitten"
                     ),
                     (
                         "Jeder Durchschnitt basiert auf "
@@ -4206,6 +4177,18 @@ if not compact:
                     "played_matchdays"
                 ]
             )
+        )
+
+        st.write(
+            "S11 Spieler-Ø Summe: "
+            + format_average_points(
+                player_average_sum
+            )
+        )
+
+        st.write(
+            "Berücksichtigte S11-Spieler: "
+            + str(player_average_count)
         )
 
         if st.button(
