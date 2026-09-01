@@ -2814,12 +2814,14 @@ def render_squad_table(
                 )
 
             elif column == "Punkte":
+                points_html = points_cell_html(
+                    row["Punkte"],
+                    row["_punkte_durchschnitt"],
+                )
+
                 cells.append(
                     "<td>"
-                    f"{points_cell_html("
-                    "row['Punkte'], "
-                    "row['_punkte_durchschnitt']"
-                    ")}"
+                    f"{points_html}"
                     "</td>"
                 )
 
