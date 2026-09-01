@@ -3514,8 +3514,8 @@ if st.sidebar.button(
     )
 
     st.session_state.pop(
-        f"league_rows_v13_{league_id}",
-        None,
+    f"league_rows_v15_{league_id}",
+    None,
     )
 
     st.rerun()
@@ -3619,6 +3619,7 @@ def get_manager_points(manager):
         first_value(
             manager,
             [
+                "shp",
                 "points",
                 "pt",
                 "pts",
@@ -3626,11 +3627,15 @@ def get_manager_points(manager):
                 "total_points",
                 "seasonPoints",
                 "season_points",
+                "score",
+                "scorePoints",
+                "sp",
+                "spt",
+                "tp",
                 "p",
             ],
         )
     )
-
 
 def league_header_class(column):
     """Bestimmt die Farbgruppe eines Spaltenkopfes."""
@@ -4028,7 +4033,7 @@ if view == "Liga":
         )
 
     cache_key = (
-        f"league_rows_v14_{league_id}"
+        f"league_rows_v15_{league_id}"
     )
 
     if st.button(
