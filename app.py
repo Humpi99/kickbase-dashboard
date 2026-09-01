@@ -3613,24 +3613,433 @@ if st.sidebar.button(
 # Liga-Ansicht
 # ---------------------------------------------------------
 
+def get_manager_points(manager):
+    """Liest die Gesamtpunkte eines Managers aus der Ligawertung."""
+    return to_number(
+        first_value(
+            manager,
+            [
+                "points",
+                "pt",
+                "pts",
+                "totalPoints",
+                "total_points",
+                "seasonPoints",
+                "season_points",
+                "p",
+            ],
+        )
+    )
+
+
+def league_header_class(column):
+    """Bestimmt die Farbgruppe eines Spaltenkopfes."""
+    trend_columns = {
+        "Trend Start 11",
+        "Trend Trading",
+        "Trend gesamt",
+    }
+
+    budget_columns = {
+        "Budget",
+        "Nach Verkauf",
+        "Budget Spieltag",
+        "S11 Spieltag",
+    }
+
+    if column in trend_columns:
+        return "league-header-trend"
+
+    if column in budget_columns:
+        return "league-header-budget"
+
+    return "league-header-main"
+
+
+def format_league_value(column, value):
+    """Formatiert einen Wert der Ligaübersicht."""
+    if column == "Punkte":
+        return format_points(value)
+
+    if column in [
+        "Start 11",
+        "Trading",
+        "Kaderwert",
+        "S11 Spieltag",
+    ]:
+        return format_currency(value)
+
+    if column in [
+        "Gewinn gesamt",
+        "Trend Start 11",
+        "Trend Trading",
+        "Trend gesamt",
+        "Budget",
+        "Nach Verkauf",
+        "Budget Spieltag",
+    ]:
+        return format_signed_currency(value)
+
+    if value is None:
+        return "—"
+
+    try:
+        if pd.isna(value):
+            return "—"
+    except (TypeError, ValueError):
+        pass
+
+    return str(value)
+
+
+def league_value_html(column, value):
+    """Färbt positive und negative Liga-Werte."""
+    text = format_league_value(
+        column,
+        value,
+    )
+
+    colored_columns = {
+        "Gewinn gesamt",
+        "Trend Start 11",
+        "Trend Trading",
+        "Trend gesamt",
+        "Budget",
+        "Nach Verkauf",
+        "Budget Spieltag",
+    }
+
+    if column not in colored_columns:
+        return escape(text)
+
+    number = to_number(value)
+
+    if number is None or number == 0:
+        return escape(text)
+
+    css_class = (
+        "value-plus"
+        if number > 0
+        else "value-minus"
+    )
+
+    return (
+        f"<span class='{css_class}'>"
+        f"{escape(text)}"
+        "</span>"
+    )
+
+
+def build_manager_link(
+    manager_id,
+    manager_name,
+    viewing_own_manager=False,
+):
+    """Baut einen anklickbaren Managernamen."""
+    display_name = (
+        f"● {manager_name}"
+        if viewing_own_manager
+        else manager_name
+    )
+
+    link = (
+        "?open_manager="
+        f"{quote(str(manager_id))}"
+    )
+
+    return (
+        f"<a class='league-manager-link' "
+        f"href='{link}' target='_self'>"
+        f"{escape(display_name)}"
+        "</a>"
+    )
+
+
+def render_league_table(
+    frame,
+    manager_ids,
+    own_flags,
+    lineup_counts,
+    columns,
+    compact=False,
+):
+    """Zeigt die Ligaübersicht mit farbigen Spaltenköpfen."""
+    header_cells = []
+
+    for column in columns:
+        css_class = league_header_class(
+            column
+        )
+
+        header_cells.append(
+            f"<th class='{css_class}'>"
+            f"{escape(column)}"
+            "</th>"
+        )
+
+    body_rows = []
+
+    for row_index, (_, row) in enumerate(
+        frame.iterrows()
+    ):
+        cells = []
+
+        manager_id = manager_ids[row_index]
+        own = own_flags[row_index]
+        lineup_count = lineup_counts[row_index]
+
+        for column in columns:
+            if column == "Manager":
+                manager_html = build_manager_link(
+                    manager_id,
+                    str(row[column]),
+                    own,
+                )
+
+                cells.append(
+                    "<td class='league-manager-cell'>"
+                    f"{manager_html}"
+                    "</td>"
+                )
+
+            elif column == "Kader":
+                lineup_number = to_number(
+                    lineup_count
+                )
+
+                invalid_lineup = (
+                    lineup_number is None
+                    or int(lineup_number)
+                    != REQUIRED_LINEUP_SIZE
+                )
+
+                css_class = (
+                    "league-squad-warning"
+                    if invalid_lineup
+                    else ""
+                )
+
+                cells.append(
+                    f"<td class='{css_class}'>"
+                    f"{escape(str(row[column]))}"
+                    "</td>"
+                )
+
+            else:
+                cells.append(
+                    "<td>"
+                    f"{league_value_html(column, row[column])}"
+                    "</td>"
+                )
+
+        body_rows.append(
+            "<tr>"
+            f"{''.join(cells)}"
+            "</tr>"
+        )
+
+    table_class = (
+        "league-table mobile"
+        if compact
+        else "league-table"
+    )
+
+    table_html = (
+        "<div class='league-wrapper'>"
+        f"<table class='{table_class}'>"
+        "<thead>"
+        "<tr>"
+        f"{''.join(header_cells)}"
+        "</tr>"
+        "</thead>"
+        "<tbody>"
+        f"{''.join(body_rows)}"
+        "</tbody>"
+        "</table>"
+        "</div>"
+    )
+
+    st.markdown(
+        table_html,
+        unsafe_allow_html=True,
+    )
+
+
+st.markdown(
+    """
+    <style>
+    .league-wrapper {
+        width: 100%;
+        overflow-x: auto;
+        margin-top: 0.5rem;
+        margin-bottom: 0.7rem;
+        border: 1px solid #e6e6e6;
+        border-radius: 8px;
+    }
+
+    .league-table {
+        width: 100%;
+        min-width: 1380px;
+        border-collapse: separate;
+        border-spacing: 0;
+        font-size: 0.82rem;
+    }
+
+    .league-table.mobile {
+        min-width: 1040px;
+        font-size: 0.74rem;
+    }
+
+    .league-table th {
+        padding: 0.65rem 0.6rem;
+        border-right: 1px solid rgba(0, 0, 0, 0.05);
+        border-bottom: 1px solid #dedede;
+        color: #3f4650;
+        font-size: 0.7rem;
+        font-weight: 700;
+        text-align: left;
+        text-transform: uppercase;
+        letter-spacing: 0.035em;
+        white-space: nowrap;
+        position: sticky;
+        top: 0;
+        z-index: 2;
+    }
+
+    .league-table.mobile th {
+        padding: 0.5rem 0.4rem;
+        font-size: 0.62rem;
+        white-space: normal;
+        line-height: 1.2;
+    }
+
+    .league-header-main {
+        background-color: #f2f4f7;
+    }
+
+    .league-header-trend {
+        background-color: #eaf6ef;
+    }
+
+    .league-header-budget {
+        background-color: #fff3e3;
+    }
+
+    .league-table td {
+        padding: 0.58rem 0.6rem;
+        border-right: 1px solid #f1f1f1;
+        border-bottom: 1px solid #eeeeee;
+        background-color: #ffffff;
+        vertical-align: middle;
+        white-space: nowrap;
+    }
+
+    .league-table.mobile td {
+        padding: 0.48rem 0.4rem;
+    }
+
+    .league-table tbody tr:hover td {
+        background-color: #fafafa;
+    }
+
+    .league-table th:last-child,
+    .league-table td:last-child {
+        border-right: none;
+    }
+
+    .league-table tbody tr:last-child td {
+        border-bottom: none;
+    }
+
+    .league-manager-cell {
+        font-weight: 700;
+    }
+
+    .league-manager-link {
+        color: #1c1c1c !important;
+        text-decoration: none !important;
+        font-weight: 700;
+    }
+
+    .league-manager-link:hover {
+        color: #1264a3 !important;
+        text-decoration: underline !important;
+    }
+
+    .league-squad-warning {
+        color: #e03131 !important;
+        font-weight: 700;
+    }
+
+    @media (max-width: 640px) {
+        .league-wrapper {
+            margin-left: -0.25rem;
+            margin-right: -0.25rem;
+            width: calc(100% + 0.5rem);
+        }
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
+
+open_manager_id = None
+
+try:
+    open_manager_id = st.query_params.get(
+        "open_manager"
+    )
+except Exception:
+    open_manager_id = None
+
+if (
+    open_manager_id
+    and str(open_manager_id) in manager_ids
+):
+    manager_selection_key = (
+        f"manager_selection_{league_id}"
+    )
+
+    st.session_state[
+        manager_selection_key
+    ] = str(open_manager_id)
+
+    st.session_state["view"] = "Manager"
+    st.session_state[
+        "came_from_league"
+    ] = True
+
+    try:
+        del st.query_params["open_manager"]
+    except Exception:
+        pass
+
+    st.rerun()
+
+
 if view == "Liga":
     st.subheader("Liga-Vergleich")
 
     if not compact:
         st.caption(
-            "Ein Klick auf eine Zeile öffnet "
-            "die Detailansicht. Eine rote "
-            "Kaderzahl bedeutet, dass die "
-            "Startelf nicht vollständig ist."
+            "Klicke auf einen Managernamen, um "
+            "dessen Kader und Kennzahlen zu öffnen."
         )
 
-    cache_key = f"league_rows_v13_{league_id}"
+    cache_key = (
+        f"league_rows_v14_{league_id}"
+    )
 
-    if st.button("Daten neu laden"):
+    if st.button(
+        "Daten neu laden",
+        key="reload_league_data",
+    ):
         st.session_state.pop(
             cache_key,
             None,
         )
+
         st.rerun()
 
     if cache_key not in st.session_state:
@@ -3644,9 +4053,18 @@ if view == "Liga":
         for index, manager in enumerate(
             managers
         ):
-            manager_id = get_manager_id(manager)
+            manager_id = get_manager_id(
+                manager
+            )
+
             manager_name = get_manager_name(
                 manager
+            )
+
+            manager_points = (
+                get_manager_points(
+                    manager
+                )
             )
 
             manager_players, _ = (
@@ -3683,32 +4101,51 @@ if view == "Liga":
                         manager_id,
                     ),
                     "Startelf-Anzahl": (
-                        manager_stats["lineup_count"]
+                        manager_stats[
+                            "lineup_count"
+                        ]
                     ),
                     "Kader": (
-                        manager_stats["player_count"]
+                        manager_stats[
+                            "player_count"
+                        ]
                     ),
+                    "Punkte": manager_points,
                     "Start 11": (
-                        manager_stats["lineup_value"]
+                        manager_stats[
+                            "lineup_value"
+                        ]
                     ),
                     "Trading": (
-                        manager_stats["trading_value"]
+                        manager_stats[
+                            "trading_value"
+                        ]
                     ),
                     "Kaderwert": (
-                        manager_stats["squad_value"]
+                        manager_stats[
+                            "squad_value"
+                        ]
                     ),
                     "Gewinn gesamt": (
-                        manager_stats["profit_in_club"]
+                        manager_stats[
+                            "profit_in_club"
+                        ]
                         + (realized or 0.0)
                     ),
                     "Trend Start 11": (
-                        manager_stats["trend_lineup"]
+                        manager_stats[
+                            "trend_lineup"
+                        ]
                     ),
                     "Trend Trading": (
-                        manager_stats["trend_trading"]
+                        manager_stats[
+                            "trend_trading"
+                        ]
                     ),
                     "Trend gesamt": (
-                        manager_stats["trend_total"]
+                        manager_stats[
+                            "trend_total"
+                        ]
                     ),
                     "S11 Spieltag": (
                         manager_lineup_matchday_value
@@ -3717,7 +4154,10 @@ if view == "Liga":
             )
 
             progress.progress(
-                (index + 1) / len(managers),
+                (
+                    index + 1
+                )
+                / len(managers),
                 text=(
                     "Kader werden geladen … "
                     f"{index + 1} von "
@@ -3726,7 +4166,10 @@ if view == "Liga":
             )
 
         progress.empty()
-        st.session_state[cache_key] = rows
+
+        st.session_state[
+            cache_key
+        ] = rows
 
     league_frame = pd.DataFrame(
         st.session_state[cache_key]
@@ -3735,7 +4178,9 @@ if view == "Liga":
     league_frame["Budget"] = (
         BASE_BUDGET
         + bonus
-        + league_frame["Gewinn gesamt"]
+        + league_frame[
+            "Gewinn gesamt"
+        ]
         - league_frame["Kaderwert"]
     )
 
@@ -3752,21 +4197,16 @@ if view == "Liga":
 
     league_frame["Budget Spieltag"] = (
         league_frame["Nach Verkauf"]
-        + league_frame["Trend Trading"]
+        + league_frame[
+            "Trend Trading"
+        ]
         * days_to_matchday
     )
-
-    league_frame["Manager"] = [
-        f"● {name}" if own else name
-        for name, own in zip(
-            league_frame["Manager"],
-            league_frame["Ich"],
-        )
-    ]
 
     if compact:
         visible_columns = [
             "Manager",
+            "Punkte",
             "Kader",
             "Kaderwert",
             "Gewinn gesamt",
@@ -3779,6 +4219,7 @@ if view == "Liga":
     else:
         visible_columns = [
             "Manager",
+            "Punkte",
             "Kader",
             "Start 11",
             "Trading",
@@ -3796,6 +4237,7 @@ if view == "Liga":
     sortable_frame = league_frame[
         [
             "Manager-ID",
+            "Ich",
             "Startelf-Anzahl",
             *visible_columns,
         ]
@@ -3805,73 +4247,68 @@ if view == "Liga":
         sortable_frame,
         visible_columns,
         key="liga",
-        default_column="Kaderwert",
+        default_column="Punkte",
         compact=compact,
     )
 
-    sorted_manager_ids = sortable_frame[
-        "Manager-ID"
-    ].tolist()
+    sorted_manager_ids = (
+        sortable_frame[
+            "Manager-ID"
+        ].astype(str).tolist()
+    )
 
-    lineup_counts = sortable_frame[
-        "Startelf-Anzahl"
-    ].tolist()
+    sorted_own_flags = (
+        sortable_frame[
+            "Ich"
+        ].tolist()
+    )
+
+    lineup_counts = (
+        sortable_frame[
+            "Startelf-Anzahl"
+        ].tolist()
+    )
 
     display_frame = sortable_frame.drop(
         columns=[
             "Manager-ID",
+            "Ich",
             "Startelf-Anzahl",
         ]
     )
 
     display_frame["Kader"] = [
-        build_squad_label(total, lineup)
+        build_squad_label(
+            total,
+            lineup,
+        )
         for total, lineup in zip(
             display_frame["Kader"],
             lineup_counts,
         )
     ]
 
-    dataframe_arguments = {
-        "use_container_width": True,
-        "hide_index": True,
-        "height": table_height(
-            len(display_frame),
-            compact,
-        ),
-        "key": "league_table",
-    }
-
-    try:
-        selection = st.dataframe(
-            style_league_table(
-                display_frame,
-                lineup_counts,
-            ),
-            on_select="rerun",
-            selection_mode="single-row",
-            **dataframe_arguments,
-        )
-    except TypeError:
-        selection = None
-
-        st.dataframe(
-            style_league_table(
-                display_frame,
-                lineup_counts,
-            ),
-            **dataframe_arguments,
-        )
-
-        st.info(
-            "Der Zeilenklick benötigt "
-            "eine neuere Streamlit-Version."
-        )
+    render_league_table(
+        display_frame,
+        sorted_manager_ids,
+        sorted_own_flags,
+        lineup_counts,
+        visible_columns,
+        compact=compact,
+    )
 
     st.caption(
-        "Die unterschiedlichen Farben der "
-        "Spaltenköpfe gruppieren Mannschaft, "
-        "Trends und Budgetwerte."
+        "Punkte zeigt die Gesamtpunkte des "
+        "Managers aus der Ligawertung."
+    )
+
+    st.caption(
+        "Die hellgrauen Spaltenköpfe enthalten "
+        "die allgemeinen Mannschaftswerte. "
+        "Die hellgrünen Spaltenköpfe enthalten "
+        "die Trends. Die hellorangenen "
+        "Spaltenköpfe enthalten die Budget- "
+        "und Spieltagsprognosen."
     )
 
     st.caption(
@@ -3908,41 +4345,7 @@ if view == "Liga":
             "Spieltag geschätzt."
         )
 
-    selected_rows = []
-
-    if selection is not None:
-        try:
-            selected_rows = (
-                selection.selection.rows
-            )
-        except AttributeError:
-            selected_rows = []
-
-    if selected_rows:
-        selected_row = selected_rows[0]
-
-        if selected_row < len(sorted_manager_ids):
-            chosen_manager_id = str(
-                sorted_manager_ids[selected_row]
-            )
-
-            selection_key = (
-                f"manager_selection_{league_id}"
-            )
-
-            st.session_state[
-                selection_key
-            ] = chosen_manager_id
-
-            st.session_state["view"] = "Manager"
-            st.session_state[
-                "came_from_league"
-            ] = True
-
-            st.rerun()
-
     st.stop()
-
 
 # ---------------------------------------------------------
 # Manager-Ansicht
