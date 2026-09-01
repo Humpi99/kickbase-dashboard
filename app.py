@@ -124,7 +124,7 @@ def format_points(value):
 
 
 def format_average_points(value):
-    """Formatiert den Punktedurchschnitt."""
+    """Formatiert einen Punktedurchschnitt."""
     number = to_number(value)
 
     if number is None:
@@ -134,7 +134,7 @@ def format_average_points(value):
 
 
 def tone_of(value):
-    """Bestimmt den Farbton eines Zahlenwertes."""
+    """Bestimmt den Farbton eines Wertes."""
     number = to_number(value)
 
     if number is None or number == 0:
@@ -393,7 +393,7 @@ def get_short_player_name(player):
 
 
 # ---------------------------------------------------------
-# Listen erkennen
+# Ligen und Manager erkennen
 # ---------------------------------------------------------
 
 def looks_like_league(item):
@@ -714,6 +714,7 @@ def is_in_lineup(player):
 
 
 def get_points_from_dictionary(data):
+    """Liest die Punkte eines Spielers."""
     if not isinstance(data, dict):
         return None, None
 
@@ -754,13 +755,20 @@ def find_player_points(
     player_id=None,
     depth=0,
 ):
+    """Sucht Spielerpunkte rekursiv."""
     if depth > 8:
         return None, None
 
     if isinstance(data, dict):
         current_id = first_value(
             data,
-            ["id", "i", "playerId", "pi", "pid"],
+            [
+                "id",
+                "i",
+                "playerId",
+                "pi",
+                "pid",
+            ],
         )
 
         id_matches = (
@@ -802,6 +810,7 @@ def find_player_points(
 
 
 def load_player_points(api, league_id, player):
+    """Lädt Gesamtpunkte und persönlichen Durchschnitt."""
     player_id = get_player_id(player)
 
     total, average = get_points_from_dictionary(
@@ -815,7 +824,7 @@ def load_player_points(api, league_id, player):
         return total, average
 
     cache_key = (
-        f"player_points_v5_{league_id}_{player_id}"
+        f"player_points_v6_{league_id}_{player_id}"
     )
 
     if cache_key in st.session_state:
@@ -869,6 +878,7 @@ def load_player_points(api, league_id, player):
 
 
 def points_cell_html(total, average):
+    """Zeigt Gesamtpunkte und Durchschnitt gemeinsam."""
     if to_number(total) is None:
         return "—"
 
@@ -886,8 +896,52 @@ def points_cell_html(total, average):
 
 
 # ---------------------------------------------------------
-# Managerpunkte
+# Managerpunkte und Spieltage
 # ---------------------------------------------------------
+
+def is_played_matchday(matchday):
+    """Prüft, ob ein Spieltag bereits gespielt wurde."""
+    if not isinstance(matchday, dict):
+        return False
+
+    if matchday.get("cur") is True:
+        return True
+
+    points = to_number(
+        matchday.get("mdp")
+    )
+
+    if points is not None and points != 0:
+        return True
+
+    matchday_date = parse_any_date(
+        matchday.get("md")
+    )
+
+    if matchday_date is None:
+        return False
+
+    return matchday_date <= datetime.now(
+        timezone.utc
+    )
+
+
+def count_played_matchdays(season):
+    """Zählt die bereits gespielten Spieltage."""
+    if not isinstance(season, dict):
+        return 0
+
+    matchdays = season.get("it", [])
+
+    if not isinstance(matchdays, list):
+        return 0
+
+    return sum(
+        1
+        for matchday in matchdays
+        if is_played_matchday(matchday)
+    )
+
 
 def contains_current_matchday(value, depth=0):
     if depth > 8:
@@ -916,6 +970,7 @@ def contains_current_matchday(value, depth=0):
 
 
 def collect_manager_seasons(value, depth=0):
+    """Sammelt Saisonblöcke eines Managers."""
     seasons = []
 
     if depth > 8:
@@ -947,12 +1002,17 @@ def collect_manager_seasons(value, depth=0):
         if is_season:
             seasons.append(
                 {
-                    "name": str(season_name or ""),
+                    "name": str(
+                        season_name or ""
+                    ),
                     "id": season_id,
                     "points": (
                         accumulated_points
                         if accumulated_points is not None
                         else total_points
+                    ),
+                    "played_matchdays": (
+                        count_played_matchdays(value)
                     ),
                     "current": contains_current_matchday(
                         value.get("it", [])
@@ -980,7 +1040,8 @@ def collect_manager_seasons(value, depth=0):
     return seasons
 
 
-def choose_current_season_points(seasons):
+def choose_current_season(seasons):
+    """Wählt die laufende Saison aus."""
     if not seasons:
         return None
 
@@ -998,14 +1059,16 @@ def choose_current_season_points(seasons):
 
     for season in seasons:
         if season["name"] == expected_name:
-            return season["points"]
+            return season
 
     for season in seasons:
         if season["current"]:
-            return season["points"]
+            return season
 
     def season_sort_value(season):
-        season_id = to_number(season.get("id"))
+        season_id = to_number(
+            season.get("id")
+        )
 
         return (
             season_id
@@ -1013,21 +1076,20 @@ def choose_current_season_points(seasons):
             else -1
         )
 
-    newest = max(
+    return max(
         seasons,
         key=season_sort_value,
     )
 
-    return newest["points"]
 
-
-def load_manager_points(
+def load_manager_point_stats(
     api,
     league_id,
     manager_id,
 ):
+    """Lädt Punkte und Spieltage der aktuellen Saison."""
     cache_key = (
-        f"manager_points_v4_"
+        f"manager_point_stats_v2_"
         f"{league_id}_{manager_id}"
     )
 
@@ -1055,7 +1117,11 @@ def load_manager_points(
         f"{user_base}/profile",
     ]
 
-    points = None
+    result = {
+        "points": None,
+        "played_matchdays": 0,
+        "average": None,
+    }
 
     for path in paths:
         try:
@@ -1063,18 +1129,54 @@ def load_manager_points(
         except Exception:
             continue
 
-        seasons = collect_manager_seasons(data)
-
-        points = choose_current_season_points(
-            seasons
+        current_season = choose_current_season(
+            collect_manager_seasons(data)
         )
 
-        if points is not None:
-            break
+        if current_season is None:
+            continue
 
-    st.session_state[cache_key] = points
+        points = current_season.get("points")
 
-    return points
+        played_matchdays = int(
+            current_season.get(
+                "played_matchdays",
+                0,
+            )
+            or 0
+        )
+
+        average = None
+
+        if (
+            points is not None
+            and played_matchdays > 0
+        ):
+            average = points / played_matchdays
+
+        result = {
+            "points": points,
+            "played_matchdays": played_matchdays,
+            "average": average,
+        }
+
+        break
+
+    st.session_state[cache_key] = result
+
+    return result
+
+
+def load_manager_points(
+    api,
+    league_id,
+    manager_id,
+):
+    return load_manager_point_stats(
+        api,
+        league_id,
+        manager_id,
+    )["points"]
 
 
 # ---------------------------------------------------------
@@ -1200,7 +1302,10 @@ def looks_like_team(item):
                 "tn",
             ],
         )
-        or first_text(item, TEAM_IMAGE_KEYS)
+        or first_text(
+            item,
+            TEAM_IMAGE_KEYS,
+        )
     )
 
 
@@ -2119,6 +2224,12 @@ def format_league_value(column, value):
     if value is None:
         return "—"
 
+    try:
+        if pd.isna(value):
+            return "—"
+    except (TypeError, ValueError):
+        pass
+
     return str(value)
 
 
@@ -2235,7 +2346,7 @@ def render_league_table(
 # ---------------------------------------------------------
 
 def kpi_block(title, entries, compact):
-    """Zeigt einen KPI-Block mit Darkmode-Farben."""
+    """Zeigt einen KPI-Block."""
     value_size = 19 if compact else 24
 
     st.markdown(
@@ -2281,36 +2392,35 @@ def kpi_block(title, entries, compact):
 
 
 # ---------------------------------------------------------
-# CSS mit Lightmode und Darkmode
+# CSS für Lightmode und Darkmode
 # ---------------------------------------------------------
 
 APP_STYLE = """
 <style>
 :root {
     --kb-text: #1c1c1c;
-    --kb-text-muted: #6f7378;
-    --kb-border: #dfe2e6;
-    --kb-row-border: #eceef0;
+    --kb-muted: #767b80;
+    --kb-border: #e4e6e8;
+    --kb-row-border: #eff0f2;
     --kb-table-bg: #ffffff;
-    --kb-row-hover: #f5f7f8;
-    --kb-trading-bg: #f7f8f9;
-    --kb-trading-text: #767b80;
-    --kb-player-photo-bg: #eef0f2;
+    --kb-hover-bg: #f7f8f9;
+    --kb-trading-bg: #fbfbfc;
+    --kb-trading-text: #92979c;
 
     --kb-positive: #0b8f43;
     --kb-negative: #d32929;
 
-    --kb-header-main-bg: #e4e8ed;
-    --kb-header-main-text: #252a30;
+    --kb-main-header-bg: #f2f4f7;
+    --kb-main-header-text: #3f4650;
 
-    --kb-header-trend-bg: #d7efe0;
-    --kb-header-trend-text: #164d2d;
+    --kb-trend-header-bg: #eaf6ef;
+    --kb-trend-header-text: #225c38;
 
-    --kb-header-budget-bg: #fbe3c4;
-    --kb-header-budget-text: #6b3c00;
+    --kb-budget-header-bg: #fff3e3;
+    --kb-budget-header-text: #704500;
 
-    --kb-login-bg: #f7f8f9;
-    --kb-login-text: #555b61;
+    --kb-login-bg: #fafafa;
+    --kb-photo-bg: #f0f0f0;
 }
 
 .login-heading {
@@ -2323,7 +2433,7 @@ APP_STYLE = """
 
 .login-subheading {
     text-align: center;
-    color: var(--kb-text-muted);
+    color: var(--kb-muted);
     margin-bottom: 1.4rem;
 }
 
@@ -2332,12 +2442,12 @@ APP_STYLE = """
     border: 1px solid var(--kb-border);
     border-radius: 10px;
     background: var(--kb-login-bg);
-    color: var(--kb-login-text);
+    color: var(--kb-muted);
     margin-top: 0.8rem;
 }
 
 .top-nav-label {
-    color: var(--kb-text-muted);
+    color: var(--kb-muted);
     font-size: 0.72rem;
     font-weight: 600;
     letter-spacing: 0.08em;
@@ -2383,12 +2493,12 @@ APP_STYLE = """
 
 .squad-table th,
 .league-table th {
-    text-align: left;
     padding: 0.6rem 0.55rem;
     border-right: 1px solid var(--kb-border);
     border-bottom: 1px solid var(--kb-border);
+    text-align: left;
     font-size: 0.68rem;
-    font-weight: 750;
+    font-weight: 700;
     text-transform: uppercase;
     white-space: nowrap;
 }
@@ -2401,8 +2511,8 @@ APP_STYLE = """
 }
 
 .squad-table th {
-    color: var(--kb-header-main-text);
-    background: var(--kb-header-main-bg);
+    color: var(--kb-main-header-text);
+    background: var(--kb-main-header-bg);
 }
 
 .squad-table td,
@@ -2423,7 +2533,7 @@ APP_STYLE = """
 
 .squad-table tbody tr:hover td,
 .league-table tbody tr:hover td {
-    background: var(--kb-row-hover);
+    background: var(--kb-hover-bg);
 }
 
 .squad-table tr.trading td {
@@ -2432,22 +2542,22 @@ APP_STYLE = """
 }
 
 .squad-table tr.trading:hover td {
-    background: var(--kb-row-hover);
+    background: var(--kb-hover-bg);
 }
 
 .league-header-main {
-    color: var(--kb-header-main-text);
-    background: var(--kb-header-main-bg);
+    color: var(--kb-main-header-text);
+    background: var(--kb-main-header-bg);
 }
 
 .league-header-trend {
-    color: var(--kb-header-trend-text);
-    background: var(--kb-header-trend-bg);
+    color: var(--kb-trend-header-text);
+    background: var(--kb-trend-header-bg);
 }
 
 .league-header-budget {
-    color: var(--kb-header-budget-text);
-    background: var(--kb-header-budget-bg);
+    color: var(--kb-budget-header-text);
+    background: var(--kb-budget-header-bg);
 }
 
 .manager-name,
@@ -2458,7 +2568,7 @@ APP_STYLE = """
 
 .squad-warning {
     color: var(--kb-negative);
-    font-weight: 750;
+    font-weight: 700;
 }
 
 .value-plus,
@@ -2478,7 +2588,7 @@ APP_STYLE = """
 }
 
 .points-average {
-    color: var(--kb-text-muted);
+    color: var(--kb-muted);
     font-size: 0.82em;
 }
 
@@ -2491,7 +2601,7 @@ APP_STYLE = """
 .player-photo {
     object-fit: cover;
     border-radius: 50%;
-    background: var(--kb-player-photo-bg);
+    background: var(--kb-photo-bg);
 }
 
 .team-logo {
@@ -2514,7 +2624,7 @@ APP_STYLE = """
     font-weight: 600;
     letter-spacing: 0.08em;
     text-transform: uppercase;
-    color: var(--kb-text-muted);
+    color: var(--kb-muted);
 }
 
 .kpi-card {
@@ -2524,7 +2634,7 @@ APP_STYLE = """
 .kpi-label,
 .kpi-note {
     font-size: 12px;
-    color: var(--kb-text-muted);
+    color: var(--kb-muted);
 }
 
 .kpi-note {
@@ -2532,64 +2642,64 @@ APP_STYLE = """
 }
 
 .kpi-value {
-    font-weight: 700;
     padding: 2px 0 4px;
+    font-weight: 700;
 }
 
 @media (prefers-color-scheme: dark) {
     :root {
-        --kb-text: #f1f3f5;
-        --kb-text-muted: #b7bdc4;
-        --kb-border: #4a5058;
-        --kb-row-border: #383e46;
+        --kb-text: #ffffff;
+        --kb-muted: #c5cad0;
+        --kb-border: #464c54;
+        --kb-row-border: #353b43;
         --kb-table-bg: #171b20;
-        --kb-row-hover: #2a3038;
+        --kb-hover-bg: #292f36;
         --kb-trading-bg: #20252b;
-        --kb-trading-text: #aeb5bd;
-        --kb-player-photo-bg: #30363d;
+        --kb-trading-text: #b0b6bd;
 
         --kb-positive: #52d889;
         --kb-negative: #ff7474;
 
-        --kb-header-main-bg: #3b434d;
-        --kb-header-main-text: #f5f7f9;
+        --kb-main-header-bg: #3b434d;
+        --kb-main-header-text: #ffffff;
 
-        --kb-header-trend-bg: #234c38;
-        --kb-header-trend-text: #d7f8e4;
+        --kb-trend-header-bg: #234c38;
+        --kb-trend-header-text: #e2f9ea;
 
-        --kb-header-budget-bg: #654719;
-        --kb-header-budget-text: #fff0ce;
+        --kb-budget-header-bg: #654719;
+        --kb-budget-header-text: #fff2d6;
 
         --kb-login-bg: #20252b;
-        --kb-login-text: #d8dde3;
+        --kb-photo-bg: #30363d;
     }
 }
 
+html[data-theme="dark"],
+body[data-theme="dark"],
 [data-theme="dark"] {
-    --kb-text: #f1f3f5;
-    --kb-text-muted: #b7bdc4;
-    --kb-border: #4a5058;
-    --kb-row-border: #383e46;
+    --kb-text: #ffffff;
+    --kb-muted: #c5cad0;
+    --kb-border: #464c54;
+    --kb-row-border: #353b43;
     --kb-table-bg: #171b20;
-    --kb-row-hover: #2a3038;
+    --kb-hover-bg: #292f36;
     --kb-trading-bg: #20252b;
-    --kb-trading-text: #aeb5bd;
-    --kb-player-photo-bg: #30363d;
+    --kb-trading-text: #b0b6bd;
 
     --kb-positive: #52d889;
     --kb-negative: #ff7474;
 
-    --kb-header-main-bg: #3b434d;
-    --kb-header-main-text: #f5f7f9;
+    --kb-main-header-bg: #3b434d;
+    --kb-main-header-text: #ffffff;
 
-    --kb-header-trend-bg: #234c38;
-    --kb-header-trend-text: #d7f8e4;
+    --kb-trend-header-bg: #234c38;
+    --kb-trend-header-text: #e2f9ea;
 
-    --kb-header-budget-bg: #654719;
-    --kb-header-budget-text: #fff0ce;
+    --kb-budget-header-bg: #654719;
+    --kb-budget-header-text: #fff2d6;
 
     --kb-login-bg: #20252b;
-    --kb-login-text: #d8dde3;
+    --kb-photo-bg: #30363d;
 }
 
 @media (max-width: 640px) {
@@ -2774,7 +2884,7 @@ player_photo_size = (
 # ---------------------------------------------------------
 
 matches_key = (
-    f"team_matches_v10_{league_id}"
+    f"team_matches_v11_{league_id}"
 )
 
 if matches_key not in st.session_state:
@@ -2925,9 +3035,11 @@ with market_nav:
         st.session_state["view"] = (
             "Transfermarkt"
         )
+
         st.session_state[
             "came_from_league"
         ] = False
+
         st.rerun()
 
 view = st.session_state["view"]
@@ -3051,7 +3163,7 @@ if st.sidebar.button(
             state_key == bonus_info_key
             or state_key == budget_key
             or state_key.startswith(
-                f"league_rows_v19_{league_id}"
+                f"league_rows_v20_{league_id}"
             )
         ):
             st.session_state.pop(
@@ -3102,7 +3214,7 @@ if view == "Liga":
     st.subheader("Liga-Vergleich")
 
     cache_key = (
-        f"league_rows_v19_{league_id}"
+        f"league_rows_v20_{league_id}"
     )
 
     if st.button(
@@ -3117,7 +3229,7 @@ if view == "Liga":
         for manager_id in manager_ids:
             st.session_state.pop(
                 (
-                    f"manager_points_v4_"
+                    f"manager_point_stats_v2_"
                     f"{league_id}_{manager_id}"
                 ),
                 None,
@@ -3146,7 +3258,7 @@ if view == "Liga":
                 manager_id,
             )
 
-            stats = compute_stats(players)
+            manager_stats = compute_stats(players)
 
             realized = load_realized_profit(
                 api,
@@ -3154,7 +3266,7 @@ if view == "Liga":
                 manager_id,
             )
 
-            points = load_manager_points(
+            point_stats = load_manager_point_stats(
                 api,
                 league_id,
                 manager_id,
@@ -3171,37 +3283,39 @@ if view == "Liga":
                         manager_id,
                     ),
                     "Startelf-Anzahl": (
-                        stats["lineup_count"]
+                        manager_stats["lineup_count"]
                     ),
                     "Kader": (
-                        stats["player_count"]
+                        manager_stats["player_count"]
                     ),
-                    "Punkte": points,
+                    "Punkte": (
+                        point_stats["points"]
+                    ),
                     "Start 11": (
-                        stats["lineup_value"]
+                        manager_stats["lineup_value"]
                     ),
                     "Trading": (
-                        stats["trading_value"]
+                        manager_stats["trading_value"]
                     ),
                     "Kaderwert": (
-                        stats["squad_value"]
+                        manager_stats["squad_value"]
                     ),
                     "Gewinn gesamt": (
-                        stats["profit_in_club"]
+                        manager_stats["profit_in_club"]
                         + (realized or 0.0)
                     ),
                     "Trend Start 11": (
-                        stats["trend_lineup"]
+                        manager_stats["trend_lineup"]
                     ),
                     "Trend Trading": (
-                        stats["trend_trading"]
+                        manager_stats["trend_trading"]
                     ),
                     "Trend gesamt": (
-                        stats["trend_total"]
+                        manager_stats["trend_total"]
                     ),
                     "S11 Spieltag": (
                         get_lineup_matchday_value(
-                            stats,
+                            manager_stats,
                             days_to_matchday,
                         )
                     ),
@@ -3218,6 +3332,7 @@ if view == "Liga":
             )
 
         progress.empty()
+
         st.session_state[cache_key] = rows
 
     league_frame = pd.DataFrame(
@@ -3326,6 +3441,7 @@ if view == "Liga":
         )
 
         st.session_state["view"] = "Manager"
+
         st.session_state[
             "came_from_league"
         ] = True
@@ -3345,9 +3461,11 @@ if st.session_state.get("came_from_league"):
         key="back_to_league",
     ):
         st.session_state["view"] = "Liga"
+
         st.session_state[
             "came_from_league"
         ] = False
+
         st.rerun()
 
 selection_key = (
@@ -3407,6 +3525,59 @@ with st.spinner("Kader wird geladen …"):
             selected_manager_id,
         )
     )
+
+manager_point_stats = load_manager_point_stats(
+    api,
+    league_id,
+    selected_manager_id,
+)
+
+player_points_by_id = {}
+player_average_sum = 0.0
+player_average_count = 0
+
+if players:
+    with st.spinner(
+        "Punktewerte werden geladen …"
+    ):
+        points_progress = st.progress(
+            0.0,
+            text="Spielerpunkte werden geladen …",
+        )
+
+        for index, player in enumerate(players):
+            player_id = get_player_id(player)
+
+            (
+                player_total_points,
+                player_average_points,
+            ) = load_player_points(
+                api,
+                league_id,
+                player,
+            )
+
+            player_points_by_id[player_id] = {
+                "total": player_total_points,
+                "average": player_average_points,
+            }
+
+            if player_average_points is not None:
+                player_average_sum += (
+                    player_average_points
+                )
+
+                player_average_count += 1
+
+            points_progress.progress(
+                (index + 1) / len(players),
+                text=(
+                    "Spielerpunkte werden geladen … "
+                    f"{index + 1} von {len(players)}"
+                ),
+            )
+
+        points_progress.empty()
 
 realized_profit = None
 
@@ -3514,6 +3685,54 @@ with st.expander(
                     (
                         f"{stats['player_count']} "
                         "Spieler"
+                    ),
+                ],
+                "neutral",
+            ),
+        ],
+        compact,
+    )
+
+    kpi_block(
+        "Punkte",
+        [
+            (
+                "Gesamt",
+                format_points(
+                    manager_point_stats["points"]
+                ),
+                [
+                    "Punkte der aktuellen Saison"
+                ],
+                "neutral",
+            ),
+            (
+                "Ø je Spieltag",
+                format_average_points(
+                    manager_point_stats["average"]
+                ),
+                [
+                    (
+                        f"{manager_point_stats['played_matchdays']} "
+                        "gespielte Spieltage"
+                    )
+                ],
+                "neutral",
+            ),
+            (
+                "Spieler-Ø Summe",
+                format_average_points(
+                    player_average_sum
+                ),
+                [
+                    (
+                        f"Summe aus "
+                        f"{player_average_count} "
+                        "Spielerdurchschnitten"
+                    ),
+                    (
+                        "Jeder Durchschnitt basiert auf "
+                        "den persönlichen Einsätzen"
                     ),
                 ],
                 "neutral",
@@ -3717,12 +3936,7 @@ else:
 
     player_rows = []
 
-    progress = st.progress(
-        0.0,
-        text="Spielerpunkte werden geladen …",
-    )
-
-    for index, player in enumerate(players):
+    for player in players:
         try:
             position = positions.get(
                 int(
@@ -3775,12 +3989,19 @@ else:
             )
         )
 
-        total_points, average_points = (
-            load_player_points(
-                api,
-                league_id,
-                player,
-            )
+        player_id = get_player_id(player)
+
+        stored_points = player_points_by_id.get(
+            player_id,
+            {},
+        )
+
+        total_points = stored_points.get(
+            "total"
+        )
+
+        average_points = stored_points.get(
+            "average"
         )
 
         team_id = get_team_id(player)
@@ -3835,16 +4056,6 @@ else:
             }
         )
 
-        progress.progress(
-            (index + 1) / len(players),
-            text=(
-                "Spielerpunkte werden geladen … "
-                f"{index + 1} von {len(players)}"
-            ),
-        )
-
-    progress.empty()
-
     player_frame = pd.DataFrame(
         player_rows
     )
@@ -3880,12 +4091,13 @@ else:
 
     st.caption(
         "Punkte zeigt die Gesamtpunkte. "
-        "In Klammern steht der Durchschnitt."
+        "In Klammern steht der persönliche "
+        "Durchschnitt des Spielers."
     )
 
     st.caption(
         "Die Spielerliste wird über die beiden "
-        "Auswahlfelder oberhalb der Tabelle sortiert."
+        "Auswahlfelder oberhalb sortiert."
     )
 
 
@@ -3910,19 +4122,20 @@ with st.expander(
             inspect_index
         ]
 
-        total_points, average_points = (
-            load_player_points(
-                api,
-                league_id,
-                inspect_player,
-            )
+        inspect_player_id = get_player_id(
+            inspect_player
+        )
+
+        inspect_points = player_points_by_id.get(
+            inspect_player_id,
+            {},
         )
 
         st.markdown(
             "Punkte: "
             + points_cell_html(
-                total_points,
-                average_points,
+                inspect_points.get("total"),
+                inspect_points.get("average"),
             ),
             unsafe_allow_html=True,
         )
@@ -3977,6 +4190,22 @@ if not compact:
         st.write(
             f"Ausgewählter Manager: "
             f"{selected_manager_name}"
+        )
+
+        st.write(
+            "Punkte gesamt: "
+            + format_points(
+                manager_point_stats["points"]
+            )
+        )
+
+        st.write(
+            "Gespielte Spieltage: "
+            + str(
+                manager_point_stats[
+                    "played_matchdays"
+                ]
+            )
         )
 
         if st.button(
