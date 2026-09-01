@@ -9,7 +9,6 @@ Ansichten:
 
 from datetime import datetime, timezone
 from html import escape
-from urllib.parse import quote
 
 import pandas as pd
 import streamlit as st
@@ -35,9 +34,12 @@ IMAGE_BASE_URL = "https://kickbase.b-cdn.net/"
 
 TEAM_LOGO_SIZE = 17
 PLAYER_PHOTO_SIZE = 24
-
 TEAM_LOGO_SIZE_MOBILE = 14
 PLAYER_PHOTO_SIZE_MOBILE = 20
+
+LEAGUE_HEADER_MAIN = "#f2f4f7"
+LEAGUE_HEADER_TREND = "#eaf6ef"
+LEAGUE_HEADER_BUDGET = "#fff3e3"
 
 
 # ---------------------------------------------------------
@@ -142,7 +144,7 @@ def format_average_points(value):
 
 
 def tone_of(value):
-    """Bestimmt die Farbe anhand des Vorzeichens."""
+    """Bestimmt den Farbton eines Zahlenwertes."""
     number = to_number(value)
 
     if number is None or number == 0:
@@ -152,7 +154,7 @@ def tone_of(value):
 
 
 def collect_dictionaries(data, depth=0):
-    """Sammelt rekursiv alle Dictionaries."""
+    """Sammelt verschachtelte Dictionaries."""
     found = []
 
     if depth > 8:
@@ -182,7 +184,7 @@ def collect_dictionaries(data, depth=0):
 
 
 def flatten_fields(value, prefix="", depth=0):
-    """Wandelt verschachtelte Daten in Tabellenzeilen um."""
+    """Wandelt Daten für die Diagnose in Zeilen um."""
     rows = []
 
     if depth > 5:
@@ -228,14 +230,14 @@ def flatten_fields(value, prefix="", depth=0):
     return rows
 
 
-def sort_controls(
+def sort_frame(
     frame,
     columns,
     key,
     default_column,
     compact=False,
 ):
-    """Zeigt Sortierfelder und sortiert eine Tabelle."""
+    """Sortiert eine Tabelle über stabile Auswahlfelder."""
     available = [
         column
         for column in columns
@@ -252,23 +254,33 @@ def sort_controls(
     )
 
     if compact:
-        left = st.container()
-        right = st.container()
+        sort_column = st.selectbox(
+            "Sortieren nach",
+            available,
+            index=default_index,
+            key=f"{key}_column",
+        )
+
+        direction = st.selectbox(
+            "Reihenfolge",
+            ["Absteigend", "Aufsteigend"],
+            key=f"{key}_direction",
+        )
     else:
         left, right = st.columns([3, 2])
 
-    sort_column = left.selectbox(
-        "Sortieren nach",
-        available,
-        index=default_index,
-        key=f"{key}_column",
-    )
+        sort_column = left.selectbox(
+            "Sortieren nach",
+            available,
+            index=default_index,
+            key=f"{key}_column",
+        )
 
-    direction = right.selectbox(
-        "Reihenfolge",
-        ["Absteigend", "Aufsteigend"],
-        key=f"{key}_direction",
-    )
+        direction = right.selectbox(
+            "Reihenfolge",
+            ["Absteigend", "Aufsteigend"],
+            key=f"{key}_direction",
+        )
 
     return frame.sort_values(
         sort_column,
@@ -421,7 +433,7 @@ def looks_like_manager(item):
     if get_manager_name(item) == "Unbekannter Manager":
         return False
 
-    manager_fields = {
+    markers = {
         "unm",
         "u",
         "userId",
@@ -435,7 +447,7 @@ def looks_like_manager(item):
         "uim",
     }
 
-    return bool(manager_fields.intersection(item.keys()))
+    return bool(markers.intersection(item.keys()))
 
 
 def find_list(
@@ -712,7 +724,6 @@ def is_in_lineup(player):
 
 
 def get_points_from_dictionary(data):
-    """Liest Punkte eines Spielers."""
     if not isinstance(data, dict):
         return None, None
 
@@ -749,7 +760,6 @@ def get_points_from_dictionary(data):
 
 
 def find_player_points(data, player_id=None, depth=0):
-    """Sucht Spielerpunkte rekursiv."""
     if depth > 8:
         return None, None
 
@@ -798,7 +808,6 @@ def find_player_points(data, player_id=None, depth=0):
 
 
 def load_player_points(api, league_id, player):
-    """Lädt die Gesamt- und Durchschnittspunkte."""
     player_id = get_player_id(player)
 
     total, average = get_points_from_dictionary(
@@ -812,7 +821,7 @@ def load_player_points(api, league_id, player):
         return total, average
 
     cache_key = (
-        f"player_points_v3_{league_id}_{player_id}"
+        f"player_points_v4_{league_id}_{player_id}"
     )
 
     if cache_key in st.session_state:
@@ -883,11 +892,10 @@ def points_cell_html(total, average):
 
 
 # ---------------------------------------------------------
-# Managerpunkte der aktuellen Saison
+# Managerpunkte
 # ---------------------------------------------------------
 
 def contains_current_matchday(value, depth=0):
-    """Prüft, ob ein Saisonblock den aktuellen Spieltag enthält."""
     if depth > 8:
         return False
 
@@ -914,7 +922,6 @@ def contains_current_matchday(value, depth=0):
 
 
 def collect_manager_seasons(value, depth=0):
-    """Sammelt Saisonblöcke eines Managers."""
     seasons = []
 
     if depth > 8:
@@ -923,9 +930,11 @@ def collect_manager_seasons(value, depth=0):
     if isinstance(value, dict):
         season_name = value.get("sn")
         season_id = value.get("sid")
+
         accumulated_points = to_number(
             value.get("ap")
         )
+
         total_points = to_number(
             value.get("tp")
         )
@@ -944,9 +953,7 @@ def collect_manager_seasons(value, depth=0):
         if is_season:
             seasons.append(
                 {
-                    "name": str(
-                        season_name or ""
-                    ),
+                    "name": str(season_name or ""),
                     "id": season_id,
                     "points": (
                         accumulated_points
@@ -980,11 +987,11 @@ def collect_manager_seasons(value, depth=0):
 
 
 def choose_current_season_points(seasons):
-    """Wählt die Punkte der laufenden Saison."""
     if not seasons:
         return None
 
     now = datetime.now()
+
     start_year = (
         now.year
         if now.month >= 7
@@ -1003,7 +1010,7 @@ def choose_current_season_points(seasons):
         if season["current"]:
             return season["points"]
 
-    def sort_value(season):
+    def season_sort_value(season):
         season_id = to_number(season.get("id"))
 
         return (
@@ -1014,7 +1021,7 @@ def choose_current_season_points(seasons):
 
     newest = max(
         seasons,
-        key=sort_value,
+        key=season_sort_value,
     )
 
     return newest["points"]
@@ -1025,9 +1032,8 @@ def load_manager_points(
     league_id,
     manager_id,
 ):
-    """Lädt die Punkte des Managers aus dem Saisonverlauf."""
     cache_key = (
-        f"manager_points_v2_"
+        f"manager_points_v3_"
         f"{league_id}_{manager_id}"
     )
 
@@ -1064,6 +1070,7 @@ def load_manager_points(
             continue
 
         seasons = collect_manager_seasons(data)
+
         points = choose_current_season_points(
             seasons
         )
@@ -1334,7 +1341,7 @@ def image_html(
     safe_label = escape(str(label or ""))
 
     if not url:
-        return safe_label
+        return ""
 
     return (
         f"<img src='{escape(url)}' "
@@ -1765,27 +1772,16 @@ def find_players(data):
         ):
             candidates.append(item)
 
-    unique_players = {}
-    unnamed_players = []
+    players_by_id = {}
 
     for player in candidates:
         player_id = get_player_id(player)
+        existing = players_by_id.get(player_id)
 
-        if player_id:
-            existing = unique_players.get(player_id)
+        if existing is None or len(player) > len(existing):
+            players_by_id[player_id] = player
 
-            if (
-                existing is None
-                or len(player) > len(existing)
-            ):
-                unique_players[player_id] = player
-        else:
-            unnamed_players.append(player)
-
-    return (
-        list(unique_players.values())
-        + unnamed_players
-    )
+    return list(players_by_id.values())
 
 
 def load_manager_players(
@@ -1967,183 +1963,7 @@ def compute_own_bonus(
 
 
 # ---------------------------------------------------------
-# Transferhistorie
-# ---------------------------------------------------------
-
-def extract_transfer_events(data, depth=0):
-    events = []
-
-    if depth > 7:
-        return events
-
-    if isinstance(data, dict):
-        player_id = first_value(
-            data,
-            ["pi", "playerId", "pid", "plid"],
-        )
-
-        amount = to_number(
-            first_value(
-                data,
-                [
-                    "trp",
-                    "price",
-                    "pr",
-                    "value",
-                    "v",
-                ],
-            )
-        )
-
-        buyer = first_value(
-            data,
-            ["byr", "buyerId", "bid"],
-        )
-
-        seller = first_value(
-            data,
-            ["slr", "sellerId", "sid"],
-        )
-
-        if (
-            player_id is not None
-            and amount is not None
-            and (
-                buyer is not None
-                or seller is not None
-            )
-        ):
-            events.append(
-                {
-                    "player_id": str(player_id),
-                    "amount": amount,
-                    "buyer": (
-                        str(buyer)
-                        if buyer is not None
-                        else None
-                    ),
-                    "seller": (
-                        str(seller)
-                        if seller is not None
-                        else None
-                    ),
-                    "name": get_player_name(data),
-                }
-            )
-
-        for value in data.values():
-            events.extend(
-                extract_transfer_events(
-                    value,
-                    depth + 1,
-                )
-            )
-
-    elif isinstance(data, list):
-        for item in data:
-            events.extend(
-                extract_transfer_events(
-                    item,
-                    depth + 1,
-                )
-            )
-
-    return events
-
-
-def load_transfer_history(
-    api,
-    league_id,
-    manager_id,
-):
-    events = []
-    samples = []
-
-    try:
-        sources, _ = api.get_manager_transfers(
-            league_id,
-            manager_id,
-        )
-
-        for source in sources:
-            events.extend(
-                extract_transfer_events(
-                    source.get("data")
-                )
-            )
-
-            if len(samples) < 2:
-                samples.append(
-                    source.get("data")
-                )
-    except Exception:
-        pass
-
-    purchases = {}
-    sales = {}
-    names = {}
-
-    for event in events:
-        player_id = event["player_id"]
-
-        if event["name"] != "Unbekannt":
-            names[player_id] = event["name"]
-
-        if event["buyer"] == str(manager_id):
-            purchases.setdefault(
-                player_id,
-                [],
-            ).append(event["amount"])
-
-        if event["seller"] == str(manager_id):
-            sales.setdefault(
-                player_id,
-                [],
-            ).append(event["amount"])
-
-    realized = 0.0
-    trades = []
-
-    for player_id, sale_prices in sales.items():
-        buy_prices = purchases.get(
-            player_id,
-            [],
-        )
-
-        for index, sale_price in enumerate(
-            sale_prices
-        ):
-            buy_price = (
-                buy_prices[index]
-                if index < len(buy_prices)
-                else None
-            )
-
-            profit = (
-                sale_price - buy_price
-                if buy_price is not None
-                else sale_price
-            )
-
-            realized += profit
-
-            trades.append(
-                {
-                    "Spieler": names.get(
-                        player_id,
-                        player_id,
-                    ),
-                    "Kaufpreis": buy_price,
-                    "Verkaufspreis": sale_price,
-                    "Gewinn": profit,
-                }
-            )
-
-    return realized, trades, samples
-
-
-# ---------------------------------------------------------
-# HTML und Tabellen
+# HTML-Tabellen
 # ---------------------------------------------------------
 
 def signed_value_html(value):
@@ -2166,90 +1986,14 @@ def signed_value_html(value):
     )
 
 
-def player_sort_state(columns):
-    default_column = "Gewinn gesamt"
-
-    try:
-        column = st.query_params.get(
-            "player_sort",
-            default_column,
-        )
-
-        direction = st.query_params.get(
-            "player_direction",
-            "desc",
-        )
-    except Exception:
-        column = default_column
-        direction = "desc"
-
-    if column not in columns:
-        column = default_column
-
-    if direction not in {"asc", "desc"}:
-        direction = "desc"
-
-    return column, direction
-
-
-def player_header_link(
-    column,
-    active_column,
-    active_direction,
-):
-    if column == active_column:
-        arrow = (
-            " ▲"
-            if active_direction == "asc"
-            else " ▼"
-        )
-
-        next_direction = (
-            "desc"
-            if active_direction == "asc"
-            else "asc"
-        )
-    else:
-        arrow = ""
-        next_direction = "asc"
-
-    link = (
-        f"?player_sort={quote(column)}"
-        f"&player_direction={next_direction}"
-    )
-
-    return (
-        "<th>"
-        f"<a class='player-sort-link' "
-        f"href='{link}' target='_self'>"
-        f"{escape(column)}{arrow}"
-        "</a>"
-        "</th>"
-    )
-
-
 def render_squad_table(
     frame,
     columns,
     compact,
 ):
-    sort_column, sort_direction = (
-        player_sort_state(columns)
-    )
-
-    frame = frame.sort_values(
-        sort_column,
-        ascending=(sort_direction == "asc"),
-        kind="stable",
-        na_position="last",
-    ).reset_index(drop=True)
-
+    """Zeigt die bereits sortierte Spielerliste ohne Links."""
     headers = "".join(
-        player_header_link(
-            column,
-            sort_column,
-            sort_direction,
-        )
+        f"<th>{escape(column)}</th>"
         for column in columns
     )
 
@@ -2378,17 +2122,6 @@ def format_league_value(column, value):
     }:
         return format_currency(value)
 
-    if column in {
-        "Gewinn gesamt",
-        "Trend Start 11",
-        "Trend Trading",
-        "Trend gesamt",
-        "Budget",
-        "Nach Verkauf",
-        "Budget Spieltag",
-    }:
-        return format_signed_currency(value)
-
     if value is None:
         return "—"
 
@@ -2400,6 +2133,7 @@ def render_league_table(
     columns,
     compact,
 ):
+    """Zeigt die Liga mit farbigen Spaltenköpfen ohne Links."""
     headers = "".join(
         (
             f"<th class='{league_header_class(column)}'>"
@@ -2410,6 +2144,16 @@ def render_league_table(
     )
 
     rows = []
+
+    signed_columns = {
+        "Gewinn gesamt",
+        "Trend Start 11",
+        "Trend Trading",
+        "Trend gesamt",
+        "Budget",
+        "Nach Verkauf",
+        "Budget Spieltag",
+    }
 
     for _, row in frame.iterrows():
         cells = []
@@ -2422,17 +2166,10 @@ def render_league_table(
                     else row["Manager"]
                 )
 
-                manager_link = (
-                    "?open_manager="
-                    f"{quote(str(row['Manager-ID']))}"
-                )
-
                 content = (
-                    f"<a class='manager-link' "
-                    f"href='{manager_link}' "
-                    f"target='_self'>"
+                    "<span class='manager-name'>"
                     f"{escape(display_name)}"
-                    "</a>"
+                    "</span>"
                 )
 
             elif column == "Kader":
@@ -2441,14 +2178,19 @@ def render_league_table(
                     row["Startelf-Anzahl"],
                 )
 
+                lineup_count = to_number(
+                    row["Startelf-Anzahl"]
+                )
+
+                warning = (
+                    lineup_count is None
+                    or int(lineup_count)
+                    != REQUIRED_LINEUP_SIZE
+                )
+
                 css_class = (
                     "squad-warning"
-                    if (
-                        to_number(
-                            row["Startelf-Anzahl"]
-                        )
-                        != REQUIRED_LINEUP_SIZE
-                    )
+                    if warning
                     else ""
                 )
 
@@ -2458,15 +2200,7 @@ def render_league_table(
                     "</span>"
                 )
 
-            elif column in {
-                "Gewinn gesamt",
-                "Trend Start 11",
-                "Trend Trading",
-                "Trend gesamt",
-                "Budget",
-                "Nach Verkauf",
-                "Budget Spieltag",
-            }:
+            elif column in signed_columns:
                 content = signed_value_html(
                     row[column]
                 )
@@ -2502,6 +2236,10 @@ def render_league_table(
     )
 
 
+# ---------------------------------------------------------
+# KPI-Blöcke
+# ---------------------------------------------------------
+
 def kpi_block(title, entries, compact):
     colors = {
         "neutral": COLOR_NEUTRAL,
@@ -2522,9 +2260,11 @@ def kpi_block(title, entries, compact):
         label, value, notes, tone = entry
 
         notes_html = "".join(
-            f"<div class='kpi-note'>"
-            f"{escape(str(note))}"
-            "</div>"
+            (
+                "<div class='kpi-note'>"
+                f"{escape(str(note))}"
+                "</div>"
+            )
             for note in notes
             if note
         )
@@ -2594,11 +2334,11 @@ APP_STYLE = """
 }
 
 .squad-table {
-    min-width: 1,050px;
+    min-width: 1050px;
 }
 
 .league-table {
-    min-width: 1,380px;
+    min-width: 1380px;
     border: 1px solid #e6e6e6;
 }
 
@@ -2608,14 +2348,14 @@ APP_STYLE = """
 }
 
 .league-table.mobile {
-    min-width: 1,060px;
+    min-width: 1060px;
     font-size: 0.72rem;
 }
 
 .squad-table th,
 .league-table th {
     text-align: left;
-    padding: 0;
+    padding: 0.6rem 0.55rem;
     border-bottom: 1px solid #dedede;
     font-size: 0.68rem;
     font-weight: 700;
@@ -2623,20 +2363,9 @@ APP_STYLE = """
     white-space: nowrap;
 }
 
-.league-table th {
-    padding: 0.65rem 0.55rem;
-}
-
-.player-sort-link {
-    display: block;
-    padding: 0.55rem;
-    color: #737373 !important;
-    text-decoration: none !important;
-}
-
-.player-sort-link:hover {
-    background: #f4f5f6;
-    color: #1c1c1c !important;
+.squad-table th {
+    background: #f2f4f7;
+    color: #555555;
 }
 
 .squad-table td,
@@ -2668,15 +2397,9 @@ APP_STYLE = """
     background: #fff3e3;
 }
 
-.manager-link {
-    color: #1c1c1c !important;
+.manager-name {
+    color: #1c1c1c;
     font-weight: 700;
-    text-decoration: none !important;
-}
-
-.manager-link:hover {
-    color: #1264a3 !important;
-    text-decoration: underline !important;
 }
 
 .squad-warning {
@@ -2851,6 +2574,7 @@ if not st.session_state.get("logged_in"):
                         "Anmeldung läuft …"
                     ):
                         api = KickbaseAPI()
+
                         result = api.login(
                             email,
                             password,
@@ -2937,7 +2661,7 @@ player_photo_size = (
 # ---------------------------------------------------------
 
 matches_key = (
-    f"team_matches_v8_{league_id}"
+    f"team_matches_v9_{league_id}"
 )
 
 if matches_key not in st.session_state:
@@ -3020,7 +2744,13 @@ else:
 # Titel und Navigation
 # ---------------------------------------------------------
 
-st.title(f"⚽ {league_name}")
+if compact:
+    st.markdown(
+        f"### ⚽ {escape(league_name)}",
+        unsafe_allow_html=True,
+    )
+else:
+    st.title(f"⚽ {league_name}")
 
 st.markdown(
     "<div class='top-nav-label'>Ansicht</div>",
@@ -3034,6 +2764,7 @@ manager_nav, league_nav, market_nav = (
 with manager_nav:
     if st.button(
         "👤 Manager",
+        key="nav_manager",
         type=(
             "primary"
             if st.session_state["view"] == "Manager"
@@ -3050,6 +2781,7 @@ with manager_nav:
 with league_nav:
     if st.button(
         "🏆 Liga",
+        key="nav_league",
         type=(
             "primary"
             if st.session_state["view"] == "Liga"
@@ -3066,6 +2798,7 @@ with league_nav:
 with market_nav:
     if st.button(
         "🛒 Transfermarkt",
+        key="nav_market",
         type=(
             "primary"
             if (
@@ -3120,7 +2853,8 @@ if not managers:
     )
 
     if ranking_errors:
-        st.write(ranking_errors)
+        with st.expander("Fehlerdetails"):
+            st.write(ranking_errors)
 
     st.stop()
 
@@ -3196,20 +2930,21 @@ bonus = bonus_mio * 1_000_000
 
 if st.sidebar.button(
     "Bonus neu berechnen",
+    key="recalculate_bonus",
     use_container_width=True,
 ):
-    for key in list(st.session_state.keys()):
+    for state_key in list(st.session_state.keys()):
         if (
-            key == bonus_info_key
-            or key == budget_key
-            or key.startswith(
-                f"league_rows_{league_id}"
-            )
-            or key.startswith(
-                f"manager_points_v2_{league_id}_"
+            state_key == bonus_info_key
+            or state_key == budget_key
+            or state_key.startswith(
+                f"league_rows_v18_{league_id}"
             )
         ):
-            st.session_state.pop(key, None)
+            st.session_state.pop(
+                state_key,
+                None,
+            )
 
     st.rerun()
 
@@ -3239,45 +2974,10 @@ st.sidebar.markdown("---")
 
 if st.sidebar.button(
     "Abmelden",
+    key="logout",
     use_container_width=True,
 ):
     st.session_state.clear()
-    st.rerun()
-
-
-# ---------------------------------------------------------
-# Managerlink aus Liga öffnen
-# ---------------------------------------------------------
-
-try:
-    open_manager_id = st.query_params.get(
-        "open_manager"
-    )
-except Exception:
-    open_manager_id = None
-
-if (
-    open_manager_id
-    and str(open_manager_id) in manager_ids
-):
-    selection_key = (
-        f"manager_selection_{league_id}"
-    )
-
-    st.session_state[selection_key] = str(
-        open_manager_id
-    )
-
-    st.session_state["view"] = "Manager"
-    st.session_state[
-        "came_from_league"
-    ] = True
-
-    try:
-        del st.query_params["open_manager"]
-    except Exception:
-        pass
-
     st.rerun()
 
 
@@ -3288,18 +2988,13 @@ if (
 if view == "Liga":
     st.subheader("Liga-Vergleich")
 
-    st.caption(
-        "Klicke auf einen Managernamen, um "
-        "dessen Kader zu öffnen."
-    )
-
     cache_key = (
-        f"league_rows_{league_id}_v17"
+        f"league_rows_v18_{league_id}"
     )
 
     if st.button(
         "Daten neu laden",
-        key="reload_league",
+        key="reload_league_data",
     ):
         st.session_state.pop(
             cache_key,
@@ -3309,7 +3004,7 @@ if view == "Liga":
         for manager_id in manager_ids:
             st.session_state.pop(
                 (
-                    f"manager_points_v2_"
+                    f"manager_points_v3_"
                     f"{league_id}_{manager_id}"
                 ),
                 None,
@@ -3471,7 +3166,7 @@ if view == "Liga":
             "S11 Spieltag",
         ]
 
-    league_frame = sort_controls(
+    league_frame = sort_frame(
         league_frame,
         visible_columns,
         key="league_sort",
@@ -3486,20 +3181,43 @@ if view == "Liga":
     )
 
     st.caption(
-        "Punkte zeigt die Gesamtpunkte der "
-        "aktuellen Saison."
-    )
-
-    st.caption(
         "Hellgrau: Mannschaftswerte. "
         "Hellgrün: Trends. "
         "Hellorange: Budget und Prognosen."
     )
 
-    st.caption(
-        "Bei einer unvollständigen Startelf steht "
-        "die Startelfanzahl rot in Klammern."
+    st.markdown("#### Manager öffnen")
+
+    manager_to_open = st.selectbox(
+        "Manager auswählen",
+        league_frame["Manager-ID"].tolist(),
+        format_func=lambda manager_id: (
+            get_manager_name(
+                manager_lookup[str(manager_id)]
+            )
+        ),
+        key="league_manager_to_open",
     )
+
+    if st.button(
+        "Manageransicht öffnen",
+        key="open_manager_view",
+        use_container_width=compact,
+    ):
+        selection_key = (
+            f"manager_selection_{league_id}"
+        )
+
+        st.session_state[selection_key] = str(
+            manager_to_open
+        )
+
+        st.session_state["view"] = "Manager"
+        st.session_state[
+            "came_from_league"
+        ] = True
+
+        st.rerun()
 
     st.stop()
 
@@ -3510,7 +3228,8 @@ if view == "Liga":
 
 if st.session_state.get("came_from_league"):
     if st.button(
-        "← Zurück zur Liga-Übersicht"
+        "← Zurück zur Liga-Übersicht",
+        key="back_to_league",
     ):
         st.session_state["view"] = "Liga"
         st.session_state[
@@ -3577,31 +3296,13 @@ with st.spinner("Kader wird geladen …"):
     )
 
 realized_profit = None
-realized_trades = []
-transfer_samples = []
-
-if show_realized and players:
-    (
-        history_profit,
-        realized_trades,
-        transfer_samples,
-    ) = load_transfer_history(
-        api,
-        league_id,
-        selected_manager_id,
-    )
-
-    realized_profit = history_profit
 
 if players:
-    direct_profit = load_realized_profit(
+    realized_profit = load_realized_profit(
         api,
         league_id,
         selected_manager_id,
     )
-
-    if direct_profit is not None:
-        realized_profit = direct_profit
 
 stats = compute_stats(players)
 
@@ -3862,7 +3563,7 @@ with st.expander(
 
 
 # ---------------------------------------------------------
-# Kadertabelle
+# Spielerliste
 # ---------------------------------------------------------
 
 st.subheader(
@@ -4047,6 +3748,17 @@ else:
         "Trend 24 Stunden",
     ]
 
+    player_frame = sort_frame(
+        player_frame,
+        player_columns,
+        key=(
+            f"player_sort_{league_id}_"
+            f"{selected_manager_id}"
+        ),
+        default_column="Gewinn gesamt",
+        compact=compact,
+    )
+
     render_squad_table(
         player_frame,
         player_columns,
@@ -4059,63 +3771,8 @@ else:
     )
 
     st.caption(
-        "Klicke auf einen Spaltenkopf, um "
-        "die Spieler zu sortieren."
-    )
-
-
-# ---------------------------------------------------------
-# Verkaufte Spieler
-# ---------------------------------------------------------
-
-if realized_trades:
-    st.subheader("Verkaufte Spieler")
-
-    trades_frame = pd.DataFrame(
-        realized_trades
-    )
-
-    trades_frame = sort_controls(
-        trades_frame,
-        [
-            "Spieler",
-            "Kaufpreis",
-            "Verkaufspreis",
-            "Gewinn",
-        ],
-        key="sales_sort",
-        default_column="Gewinn",
-        compact=compact,
-    )
-
-    display_trades = trades_frame.copy()
-
-    display_trades["Kaufpreis"] = (
-        display_trades["Kaufpreis"].apply(
-            lambda value: (
-                "Zulosung"
-                if value is None or pd.isna(value)
-                else format_currency(value)
-            )
-        )
-    )
-
-    display_trades["Verkaufspreis"] = (
-        display_trades[
-            "Verkaufspreis"
-        ].apply(format_currency)
-    )
-
-    display_trades["Gewinn"] = (
-        display_trades["Gewinn"].apply(
-            format_signed_currency
-        )
-    )
-
-    st.dataframe(
-        display_trades,
-        use_container_width=True,
-        hide_index=True,
+        "Die Spielerliste wird über die beiden "
+        "Auswahlfelder oberhalb der Tabelle sortiert."
     )
 
 
@@ -4133,6 +3790,7 @@ with st.expander(
             format_func=lambda index: (
                 get_player_name(players[index])
             ),
+            key="diagnostic_player",
         )
 
         inspect_player = players[
@@ -4185,7 +3843,8 @@ if not compact:
         )
 
         if st.button(
-            "Vereine und Spielplan neu laden"
+            "Vereine und Spielplan neu laden",
+            key="reload_matches",
         ):
             st.session_state.pop(
                 matches_key,
@@ -4208,7 +3867,8 @@ if not compact:
         )
 
         if st.button(
-            "Manager-Daten laden"
+            "Manager-Daten laden",
+            key="load_manager_diagnostics",
         ):
             try:
                 sources, errors = (
@@ -4258,22 +3918,4 @@ if not compact:
             st.warning(
                 "Einige zusätzlichen Daten "
                 "konnten nicht geladen werden."
-            )
-
-    with st.expander(
-        "Diagnose der Transferdaten"
-    ):
-        if transfer_samples:
-            for index, sample in enumerate(
-                transfer_samples,
-                start=1,
-            ):
-                with st.expander(
-                    f"Datensatz {index}"
-                ):
-                    st.json(sample)
-        else:
-            st.write(
-                "Keine zusätzlichen "
-                "Transferdaten geladen."
             )
