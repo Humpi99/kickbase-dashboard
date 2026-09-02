@@ -32,6 +32,35 @@ TEAM_LOGO_SIZE_MOBILE = 14
 PLAYER_PHOTO_SIZE_MOBILE = 20
 
 
+S11_PROBABILITY = {
+    1: {
+        "label": "Sicher",
+        "symbol": "+",
+        "css_class": "probability-safe",
+    },
+    2: {
+        "label": "Erwartet",
+        "symbol": "✓",
+        "css_class": "probability-expected",
+    },
+    3: {
+        "label": "Unsicher",
+        "symbol": "?",
+        "css_class": "probability-uncertain",
+    },
+    4: {
+        "label": "Unwahrscheinlich",
+        "symbol": "!",
+        "css_class": "probability-unlikely",
+    },
+    5: {
+        "label": "Ausgeschlossen",
+        "symbol": "×",
+        "css_class": "probability-excluded",
+    },
+}
+
+
 # ---------------------------------------------------------
 # Allgemeine Hilfsfunktionen
 # ---------------------------------------------------------
@@ -256,6 +285,7 @@ def sort_frame(
             ["Absteigend", "Aufsteigend"],
             key=f"{key}_direction",
         )
+
     else:
         left, right = st.columns([3, 2])
 
@@ -713,8 +743,12 @@ def is_in_lineup(player):
     return get_lineup_slot(player) is not None
 
 
+# ---------------------------------------------------------
+# Spielerpunkte
+# ---------------------------------------------------------
+
 def get_points_from_dictionary(data):
-    """Liest die Punkte eines Spielers."""
+    """Liest Punkte eines Spielers."""
     if not isinstance(data, dict):
         return None, None
 
@@ -809,22 +843,173 @@ def find_player_points(
     return None, None
 
 
-def load_player_points(api, league_id, player):
-    """Lädt Gesamtpunkte und persönlichen Durchschnitt."""
+# ---------------------------------------------------------
+# Startelfwahrscheinlichkeit
+# ---------------------------------------------------------
+
+def normalize_probability(value):
+    """Wandelt prob sicher in eine Stufe von 1 bis 5 um."""
+    number = to_number(value)
+
+    if number is None:
+        return None
+
+    probability = int(number)
+
+    if probability not in S11_PROBABILITY:
+        return None
+
+    return probability
+
+
+def find_player_probability(
+    data,
+    player_id=None,
+    depth=0,
+):
+    """Sucht das Feld prob in den Spielerdaten."""
+    if depth > 8:
+        return None
+
+    if isinstance(data, dict):
+        if "prob" in data:
+            probability = normalize_probability(
+                data.get("prob")
+            )
+
+            if probability is not None:
+                return probability
+
+        current_id = first_value(
+            data,
+            [
+                "id",
+                "i",
+                "playerId",
+                "pi",
+                "pid",
+            ],
+        )
+
+        id_matches = (
+            player_id is None
+            or current_id is None
+            or str(current_id) == str(player_id)
+        )
+
+        if id_matches:
+            for nested_value in data.values():
+                probability = find_player_probability(
+                    nested_value,
+                    player_id,
+                    depth + 1,
+                )
+
+                if probability is not None:
+                    return probability
+
+    elif isinstance(data, list):
+        for item in data:
+            probability = find_player_probability(
+                item,
+                player_id,
+                depth + 1,
+            )
+
+            if probability is not None:
+                return probability
+
+    return None
+
+
+def probability_label(value):
+    probability = normalize_probability(value)
+
+    if probability is None:
+        return "Keine Angabe"
+
+    return S11_PROBABILITY[probability]["label"]
+
+
+def probability_badge_html(value):
+    """Erstellt das farbige Symbol neben dem Spieler."""
+    probability = normalize_probability(value)
+
+    if probability is None:
+        return (
+            "<span class='probability-badge "
+            "probability-unknown' "
+            "title='Keine Startelfprognose'>"
+            "–"
+            "</span>"
+        )
+
+    information = S11_PROBABILITY[probability]
+
+    return (
+        "<span "
+        f"class='probability-badge "
+        f"{information['css_class']}' "
+        f"title='S11-Prognose: "
+        f"{escape(information['label'])} "
+        f"(Stufe {probability})'>"
+        f"{escape(information['symbol'])}"
+        "</span>"
+    )
+
+
+def probability_legend_html():
+    """Erstellt die Legende unter der Spielertabelle."""
+    items = []
+
+    for probability, information in S11_PROBABILITY.items():
+        badge = probability_badge_html(probability)
+
+        items.append(
+            "<span class='probability-legend-item'>"
+            f"{badge}"
+            f"<span>{escape(information['label'])}</span>"
+            "</span>"
+        )
+
+    return (
+        "<div class='probability-legend'>"
+        "<span class='probability-legend-title'>"
+        "S11-Prognose:"
+        "</span>"
+        f"{''.join(items)}"
+        "</div>"
+    )
+
+
+# ---------------------------------------------------------
+# Spielerdetails laden
+# ---------------------------------------------------------
+
+def load_player_information(api, league_id, player):
+    """
+    Lädt Punkte, persönlichen Durchschnitt und prob.
+
+    Für prob werden zuerst die ligaunabhängigen
+    Spieler-Endpunkte verwendet.
+    """
     player_id = get_player_id(player)
 
     total, average = get_points_from_dictionary(
         player
     )
 
-    if total is not None and average is not None:
-        return total, average
+    probability = find_player_probability(
+        player,
+        player_id,
+    )
 
     if not player_id:
-        return total, average
+        return total, average, probability
 
     cache_key = (
-        f"player_points_v6_{league_id}_{player_id}"
+        f"player_information_v8_"
+        f"{league_id}_{player_id}"
     )
 
     if cache_key in st.session_state:
@@ -833,19 +1018,22 @@ def load_player_points(api, league_id, player):
         return (
             cached.get("total"),
             cached.get("average"),
+            cached.get("probability"),
         )
 
     paths = [
         f"/v4/players/{player_id}",
         (
-            f"/v4/leagues/{league_id}"
-            f"/players/{player_id}"
-        ),
-        (
             f"/v4/competitions/1"
             f"/players/{player_id}"
         ),
+        (
+            f"/v4/leagues/{league_id}"
+            f"/players/{player_id}"
+        ),
     ]
+
+    successful_path = None
 
     for path in paths:
         try:
@@ -853,9 +1041,18 @@ def load_player_points(api, league_id, player):
         except Exception:
             continue
 
-        found_total, found_average = find_player_points(
-            details,
-            player_id,
+        found_total, found_average = (
+            find_player_points(
+                details,
+                player_id,
+            )
+        )
+
+        found_probability = (
+            find_player_probability(
+                details,
+                player_id,
+            )
         )
 
         if total is None:
@@ -864,13 +1061,36 @@ def load_player_points(api, league_id, player):
         if average is None:
             average = found_average
 
-        if total is not None and average is not None:
+        if probability is None:
+            probability = found_probability
+
+        if found_probability is not None:
+            successful_path = path
+
+        if (
+            total is not None
+            and average is not None
+            and probability is not None
+        ):
             break
 
     st.session_state[cache_key] = {
         "total": total,
         "average": average,
+        "probability": probability,
+        "probability_path": successful_path,
     }
+
+    return total, average, probability
+
+
+def load_player_points(api, league_id, player):
+    """Kompatibilitätsfunktion für Spielerpunkte."""
+    total, average, _ = load_player_information(
+        api,
+        league_id,
+        player,
+    )
 
     return total, average
 
@@ -894,7 +1114,7 @@ def points_cell_html(total, average):
 
 
 # ---------------------------------------------------------
-# Managerpunkte und Spieltage
+# Datumsfunktionen
 # ---------------------------------------------------------
 
 def parse_any_date(value):
@@ -913,6 +1133,7 @@ def parse_any_date(value):
                 )
 
             return parsed
+
         except ValueError:
             pass
 
@@ -930,6 +1151,7 @@ def parse_any_date(value):
                 number,
                 tz=timezone.utc,
             )
+
     except (
         ValueError,
         OSError,
@@ -939,6 +1161,10 @@ def parse_any_date(value):
 
     return None
 
+
+# ---------------------------------------------------------
+# Managerpunkte und Spieltage
+# ---------------------------------------------------------
 
 def is_played_matchday(matchday):
     """Prüft, ob ein Spieltag bereits gespielt wurde."""
@@ -968,7 +1194,7 @@ def is_played_matchday(matchday):
 
 
 def count_played_matchdays(season):
-    """Zählt die bereits gespielten Spieltage."""
+    """Zählt bereits gespielte Spieltage."""
     if not isinstance(season, dict):
         return 0
 
@@ -1270,13 +1496,18 @@ def build_image_url(value):
     if not cleaned:
         return ""
 
-    if cleaned.startswith(("http://", "https://")):
+    if cleaned.startswith(
+        ("http://", "https://")
+    ):
         return cleaned
 
     if cleaned.startswith("//"):
         return f"https:{cleaned}"
 
-    return IMAGE_BASE_URL + cleaned.lstrip("/")
+    return (
+        IMAGE_BASE_URL
+        + cleaned.lstrip("/")
+    )
 
 
 def get_team_id(player):
@@ -1288,7 +1519,10 @@ def get_team_id(player):
     if value is None:
         return None
 
-    if isinstance(value, (dict, list, bool)):
+    if isinstance(
+        value,
+        (dict, list, bool),
+    ):
         return None
 
     return str(value)
@@ -1400,7 +1634,10 @@ def get_team_name(team_id, teams):
     if not team_id:
         return ""
 
-    entry = teams.get(str(team_id), {})
+    entry = teams.get(
+        str(team_id),
+        {},
+    )
 
     return (
         entry.get("name")
@@ -1416,7 +1653,10 @@ def get_team_logo(team_id, teams):
     return teams.get(
         str(team_id),
         {},
-    ).get("logo", "")
+    ).get(
+        "logo",
+        "",
+    )
 
 
 def get_club_label(player, teams):
@@ -1466,7 +1706,9 @@ def image_html(
     size,
     css_class,
 ):
-    safe_label = escape(str(label or ""))
+    safe_label = escape(
+        str(label or "")
+    )
 
     if not url:
         return ""
@@ -1476,7 +1718,8 @@ def image_html(
         f"alt='{safe_label}' "
         f"title='{safe_label}' "
         f"class='{css_class}' "
-        f"style='height:{size}px;width:{size}px;' />"
+        f"style='height:{size}px;"
+        f"width:{size}px;' />"
     )
 
 
@@ -1512,10 +1755,16 @@ def extract_matches(sources):
             if home_id is None or away_id is None:
                 continue
 
-            if isinstance(home_id, (dict, list, bool)):
+            if isinstance(
+                home_id,
+                (dict, list, bool),
+            ):
                 continue
 
-            if isinstance(away_id, (dict, list, bool)):
+            if isinstance(
+                away_id,
+                (dict, list, bool),
+            ):
                 continue
 
             match_date = None
@@ -1534,7 +1783,10 @@ def extract_matches(sources):
                 if match_date is not None:
                     break
 
-            if match_date is None or match_date < now:
+            if (
+                match_date is None
+                or match_date < now
+            ):
                 continue
 
             signature = (
@@ -1733,13 +1985,19 @@ def build_next_matches_html(
 
         opponent_name = (
             entry.get("opponent_name")
-            or get_team_name(opponent_id, teams)
+            or get_team_name(
+                opponent_id,
+                teams,
+            )
             or "Gegner"
         )
 
         opponent_logo = (
             entry.get("opponent_logo")
-            or get_team_logo(opponent_id, teams)
+            or get_team_logo(
+                opponent_id,
+                teams,
+            )
         )
 
         logo = image_html(
@@ -1881,6 +2139,7 @@ def load_manager_players(
         )
 
         return find_players(data), None
+
     except Exception as error:
         return [], str(error)
 
@@ -1911,8 +2170,13 @@ def compute_stats(players):
             get_buy_price(player) or 0.0
         )
 
-        profit = get_profit(player) or 0.0
-        trend = get_daily_change(player) or 0.0
+        profit = (
+            get_profit(player) or 0.0
+        )
+
+        trend = (
+            get_daily_change(player) or 0.0
+        )
 
         stats["squad_value"] += market_value
         stats["buy_total"] += buy_price
@@ -1924,6 +2188,7 @@ def compute_stats(players):
             stats["buy_lineup"] += buy_price
             stats["trend_lineup"] += trend
             stats["lineup_count"] += 1
+
         else:
             stats["trading_value"] += market_value
             stats["buy_trading"] += buy_price
@@ -1956,6 +2221,7 @@ def load_realized_profit(
         )
 
         return value
+
     except Exception:
         return None
 
@@ -1964,6 +2230,7 @@ def load_real_budget(api, league_id):
     try:
         value, _ = api.get_budget(league_id)
         return value
+
     except Exception:
         return None
 
@@ -1977,6 +2244,7 @@ def compute_budget(
 ):
     if real_balance is not None:
         balance = real_balance
+
     else:
         balance = (
             BASE_BUDGET
@@ -2076,7 +2344,7 @@ def render_squad_table(
     columns,
     compact,
 ):
-    """Zeigt die bereits sortierte Spielerliste."""
+    """Zeigt die sortierte Spielerliste."""
     headers = "".join(
         f"<th>{escape(column)}</th>"
         for column in columns
@@ -2111,7 +2379,9 @@ def render_squad_table(
                 "Marktwert",
             }:
                 content = escape(
-                    format_currency(row[column])
+                    format_currency(
+                        row[column]
+                    )
                 )
 
             elif column in {
@@ -2128,9 +2398,13 @@ def render_squad_table(
                 if value is None:
                     content = "—"
                 else:
-                    content = escape(str(value))
+                    content = escape(
+                        str(value)
+                    )
 
-            cells.append(f"<td>{content}</td>")
+            cells.append(
+                f"<td>{content}</td>"
+            )
 
         rows.append(
             f"<tr class='{row_class}'>"
@@ -2173,7 +2447,10 @@ def build_squad_label(
     ):
         return total_text
 
-    return f"{total_text} ({int(lineup)})"
+    return (
+        f"{total_text} "
+        f"({int(lineup)})"
+    )
 
 
 def league_header_class(column):
@@ -2227,7 +2504,8 @@ def render_league_table(
     """Zeigt die Liga mit farbigen Spaltenköpfen."""
     headers = "".join(
         (
-            f"<th class='{league_header_class(column)}'>"
+            f"<th class='"
+            f"{league_header_class(column)}'>"
             f"{escape(column)}"
             "</th>"
         )
@@ -2304,7 +2582,9 @@ def render_league_table(
                     )
                 )
 
-            cells.append(f"<td>{content}</td>")
+            cells.append(
+                f"<td>{content}</td>"
+            )
 
         rows.append(
             f"<tr>{''.join(cells)}</tr>"
@@ -2336,13 +2616,20 @@ def kpi_block(title, entries, compact):
     value_size = 19 if compact else 24
 
     st.markdown(
-        f"<div class='kpi-title'>{escape(title)}</div>",
+        f"<div class='kpi-title'>"
+        f"{escape(title)}"
+        "</div>",
         unsafe_allow_html=True,
     )
 
-    columns = st.columns(len(entries))
+    columns = st.columns(
+        len(entries)
+    )
 
-    for column, entry in zip(columns, entries):
+    for column, entry in zip(
+        columns,
+        entries,
+    ):
         label, value, notes, tone = entry
 
         notes_html = "".join(
@@ -2366,9 +2653,13 @@ def kpi_block(title, entries, compact):
 
         column.markdown(
             "<div class='kpi-card'>"
-            f"<div class='kpi-label'>{escape(label)}</div>"
-            f"<div class='kpi-value {tone_class}' "
-            f"style='font-size:{value_size}px;'>"
+            f"<div class='kpi-label'>"
+            f"{escape(label)}"
+            "</div>"
+            f"<div class='kpi-value "
+            f"{tone_class}' "
+            f"style='font-size:"
+            f"{value_size}px;'>"
             f"{value}"
             "</div>"
             f"{notes_html}"
@@ -2590,10 +2881,12 @@ APP_STYLE = """
     object-fit: cover;
     border-radius: 50%;
     background: var(--kb-photo-bg);
+    flex: 0 0 auto;
 }
 
 .team-logo {
     object-fit: contain;
+    flex: 0 0 auto;
 }
 
 .match-entry {
@@ -2601,6 +2894,72 @@ APP_STYLE = """
     align-items: center;
     gap: 0.2rem;
     margin-right: 0.6rem;
+    color: var(--kb-text);
+}
+
+.probability-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 19px;
+    height: 19px;
+    min-width: 19px;
+    border-radius: 50%;
+    color: #ffffff !important;
+    font-family: Arial, sans-serif;
+    font-size: 13px;
+    font-weight: 800;
+    line-height: 1;
+    vertical-align: middle;
+    box-sizing: border-box;
+    flex: 0 0 19px;
+    cursor: help;
+}
+
+.probability-safe {
+    background: #159bd3;
+}
+
+.probability-expected {
+    background: #26a95b;
+}
+
+.probability-uncertain {
+    background: #e2a51d;
+}
+
+.probability-unlikely {
+    background: #e35a35;
+}
+
+.probability-excluded {
+    background: #555b63;
+}
+
+.probability-unknown {
+    background: #a5a9ae;
+    color: #ffffff !important;
+}
+
+.probability-legend {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.55rem 1rem;
+    margin: 0.45rem 0 0.8rem;
+    color: var(--kb-text);
+    font-size: 0.76rem;
+}
+
+.probability-legend-title {
+    color: var(--kb-muted);
+    font-weight: 700;
+}
+
+.probability-legend-item {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
     color: var(--kb-text);
 }
 
@@ -2634,10 +2993,6 @@ APP_STYLE = """
     font-weight: 700;
 }
 
-/*
-Nur der tatsächlich ausgewählte Streamlit-Darkmode
-aktiviert die dunklen Farben.
-*/
 html[data-theme="dark"],
 body[data-theme="dark"],
 [data-theme="dark"] {
@@ -2682,6 +3037,19 @@ body[data-theme="dark"],
 
     .kpi-note {
         font-size: 10px;
+    }
+
+    .probability-badge {
+        width: 17px;
+        height: 17px;
+        min-width: 17px;
+        flex-basis: 17px;
+        font-size: 11px;
+    }
+
+    .probability-legend {
+        font-size: 0.7rem;
+        gap: 0.45rem 0.7rem;
     }
 }
 </style>
@@ -2757,6 +3125,7 @@ if not st.session_state.get("logged_in"):
                 st.warning(
                     "Bitte E-Mail und Passwort eingeben."
                 )
+
             else:
                 try:
                     with st.spinner(
@@ -2877,7 +3246,10 @@ budget_key = f"own_budget_{league_id}"
 
 if budget_key not in st.session_state:
     st.session_state[budget_key] = (
-        load_real_budget(api, league_id)
+        load_real_budget(
+            api,
+            league_id,
+        )
     )
 
 own_budget = st.session_state[budget_key]
@@ -2922,6 +3294,7 @@ if found_days is None:
         "Der Spieltag konnte nicht automatisch "
         "ermittelt werden."
     )
+
 else:
     st.sidebar.caption(
         "Der nächste Spieltag wurde automatisch "
@@ -2938,11 +3311,14 @@ if compact:
         f"### ⚽ {escape(league_name)}",
         unsafe_allow_html=True,
     )
+
 else:
     st.title(f"⚽ {league_name}")
 
 st.markdown(
-    "<div class='top-nav-label'>Ansicht</div>",
+    "<div class='top-nav-label'>"
+    "Ansicht"
+    "</div>",
     unsafe_allow_html=True,
 )
 
@@ -2956,7 +3332,8 @@ with manager_nav:
         key="nav_manager",
         type=(
             "primary"
-            if st.session_state["view"] == "Manager"
+            if st.session_state["view"]
+            == "Manager"
             else "secondary"
         ),
         use_container_width=True,
@@ -2973,7 +3350,8 @@ with league_nav:
         key="nav_league",
         type=(
             "primary"
-            if st.session_state["view"] == "Liga"
+            if st.session_state["view"]
+            == "Liga"
             else "secondary"
         ),
         use_container_width=True,
@@ -2990,10 +3368,8 @@ with market_nav:
         key="nav_market",
         type=(
             "primary"
-            if (
-                st.session_state["view"]
-                == "Transfermarkt"
-            )
+            if st.session_state["view"]
+            == "Transfermarkt"
             else "secondary"
         ),
         use_container_width=True,
@@ -3023,7 +3399,9 @@ if view == "Transfermarkt":
 # Manager laden
 # ---------------------------------------------------------
 
-with st.spinner("Manager werden geladen …"):
+with st.spinner(
+    "Manager werden geladen …"
+):
     ranking_sources, ranking_errors = (
         api.get_ranking(league_id)
     )
@@ -3064,7 +3442,9 @@ manager_lookup = {
     for manager in managers
 }
 
-manager_ids = list(manager_lookup.keys())
+manager_ids = list(
+    manager_lookup.keys()
+)
 
 
 # ---------------------------------------------------------
@@ -3093,7 +3473,9 @@ if bonus_info_key not in st.session_state:
         )
     )
 
-bonus_info = st.session_state[bonus_info_key]
+bonus_info = st.session_state[
+    bonus_info_key
+]
 
 suggested_bonus = (
     bonus_info["bonus"] / 1_000_000
@@ -3124,7 +3506,9 @@ if st.sidebar.button(
     key="recalculate_bonus",
     use_container_width=True,
 ):
-    for state_key in list(st.session_state.keys()):
+    for state_key in list(
+        st.session_state.keys()
+    ):
         if (
             state_key == bonus_info_key
             or state_key == budget_key
@@ -3224,7 +3608,9 @@ if view == "Liga":
                 manager_id,
             )
 
-            manager_stats = compute_stats(players)
+            manager_stats = compute_stats(
+                players
+            )
 
             realized = load_realized_profit(
                 api,
@@ -3232,10 +3618,12 @@ if view == "Liga":
                 manager_id,
             )
 
-            point_stats = load_manager_point_stats(
-                api,
-                league_id,
-                manager_id,
+            point_stats = (
+                load_manager_point_stats(
+                    api,
+                    league_id,
+                    manager_id,
+                )
             )
 
             rows.append(
@@ -3249,35 +3637,53 @@ if view == "Liga":
                         manager_id,
                     ),
                     "Startelf-Anzahl": (
-                        manager_stats["lineup_count"]
+                        manager_stats[
+                            "lineup_count"
+                        ]
                     ),
                     "Kader": (
-                        manager_stats["player_count"]
+                        manager_stats[
+                            "player_count"
+                        ]
                     ),
                     "Punkte": (
                         point_stats["points"]
                     ),
                     "Start 11": (
-                        manager_stats["lineup_value"]
+                        manager_stats[
+                            "lineup_value"
+                        ]
                     ),
                     "Trading": (
-                        manager_stats["trading_value"]
+                        manager_stats[
+                            "trading_value"
+                        ]
                     ),
                     "Kaderwert": (
-                        manager_stats["squad_value"]
+                        manager_stats[
+                            "squad_value"
+                        ]
                     ),
                     "Gewinn gesamt": (
-                        manager_stats["profit_in_club"]
+                        manager_stats[
+                            "profit_in_club"
+                        ]
                         + (realized or 0.0)
                     ),
                     "Trend Start 11": (
-                        manager_stats["trend_lineup"]
+                        manager_stats[
+                            "trend_lineup"
+                        ]
                     ),
                     "Trend Trading": (
-                        manager_stats["trend_trading"]
+                        manager_stats[
+                            "trend_trading"
+                        ]
                     ),
                     "Trend gesamt": (
-                        manager_stats["trend_total"]
+                        manager_stats[
+                            "trend_total"
+                        ]
                     ),
                     "S11 Spieltag": (
                         get_lineup_matchday_value(
@@ -3342,6 +3748,7 @@ if view == "Liga":
             "Budget Spieltag",
             "S11 Spieltag",
         ]
+
     else:
         visible_columns = [
             "Manager",
@@ -3380,14 +3787,20 @@ if view == "Liga":
         "Orange: Budget und Prognosen."
     )
 
-    st.markdown("#### Manager öffnen")
+    st.markdown(
+        "#### Manager öffnen"
+    )
 
     manager_to_open = st.selectbox(
         "Manager auswählen",
-        league_frame["Manager-ID"].tolist(),
+        league_frame[
+            "Manager-ID"
+        ].tolist(),
         format_func=lambda manager_id: (
             get_manager_name(
-                manager_lookup[str(manager_id)]
+                manager_lookup[
+                    str(manager_id)
+                ]
             )
         ),
         key="league_manager_to_open",
@@ -3402,11 +3815,13 @@ if view == "Liga":
             f"manager_selection_{league_id}"
         )
 
-        st.session_state[selection_key] = str(
-            manager_to_open
-        )
+        st.session_state[
+            selection_key
+        ] = str(manager_to_open)
 
-        st.session_state["view"] = "Manager"
+        st.session_state[
+            "view"
+        ] = "Manager"
 
         st.session_state[
             "came_from_league"
@@ -3421,12 +3836,16 @@ if view == "Liga":
 # Manageransicht
 # ---------------------------------------------------------
 
-if st.session_state.get("came_from_league"):
+if st.session_state.get(
+    "came_from_league"
+):
     if st.button(
         "← Zurück zur Liga-Übersicht",
         key="back_to_league",
     ):
-        st.session_state["view"] = "Liga"
+        st.session_state[
+            "view"
+        ] = "Liga"
 
         st.session_state[
             "came_from_league"
@@ -3483,7 +3902,9 @@ viewing_self = is_own_manager(
     selected_manager_id,
 )
 
-with st.spinner("Kader wird geladen …"):
+with st.spinner(
+    "Kader wird geladen …"
+):
     players, squad_error = (
         load_manager_players(
             api,
@@ -3492,47 +3913,63 @@ with st.spinner("Kader wird geladen …"):
         )
     )
 
-manager_point_stats = load_manager_point_stats(
-    api,
-    league_id,
-    selected_manager_id,
+manager_point_stats = (
+    load_manager_point_stats(
+        api,
+        league_id,
+        selected_manager_id,
+    )
 )
 
-player_points_by_id = {}
+player_information_by_id = {}
 player_average_sum = 0.0
 player_average_count = 0
 
 if players:
     with st.spinner(
-        "Punktewerte werden geladen …"
+        "Punkte und S11-Prognosen "
+        "werden geladen …"
     ):
         points_progress = st.progress(
             0.0,
-            text="Spielerpunkte werden geladen …",
+            text=(
+                "Spielerdaten werden geladen …"
+            ),
         )
 
-        for index, player in enumerate(players):
-            player_id = get_player_id(player)
+        for index, player in enumerate(
+            players
+        ):
+            player_id = get_player_id(
+                player
+            )
 
             (
                 player_total_points,
                 player_average_points,
-            ) = load_player_points(
+                player_probability,
+            ) = load_player_information(
                 api,
                 league_id,
                 player,
             )
 
-            player_points_by_id[player_id] = {
+            player_information_by_id[
+                player_id
+            ] = {
                 "total": player_total_points,
-                "average": player_average_points,
+                "average": (
+                    player_average_points
+                ),
+                "probability": (
+                    player_probability
+                ),
             }
 
-            # Für die Spieler-Ø Summe werden nur
-            # Spieler der aktuellen Start 11 berücksichtigt.
             if (
                 is_in_lineup(player)
-                and player_average_points is not None
+                and player_average_points
+                is not None
             ):
                 player_average_sum += (
                     player_average_points
@@ -3543,8 +3980,9 @@ if players:
             points_progress.progress(
                 (index + 1) / len(players),
                 text=(
-                    "Spielerpunkte werden geladen … "
-                    f"{index + 1} von {len(players)}"
+                    "Spielerdaten werden geladen … "
+                    f"{index + 1} von "
+                    f"{len(players)}"
                 ),
             )
 
@@ -3561,7 +3999,9 @@ if players:
 
 stats = compute_stats(players)
 
-total_profit = stats["profit_in_club"]
+total_profit = stats[
+    "profit_in_club"
+]
 
 if realized_profit is not None:
     total_profit += realized_profit
@@ -3580,7 +4020,8 @@ budget = compute_budget(
 
 with st.expander(
     (
-        f"Kennzahlen: {selected_manager_name}"
+        f"Kennzahlen: "
+        f"{selected_manager_name}"
         + (" ●" if viewing_self else "")
     ),
     expanded=(
@@ -3670,7 +4111,9 @@ with st.expander(
             (
                 "Gesamt",
                 format_points(
-                    manager_point_stats["points"]
+                    manager_point_stats[
+                        "points"
+                    ]
                 ),
                 [
                     "Punkte der aktuellen Saison"
@@ -3680,7 +4123,9 @@ with st.expander(
             (
                 "Ø je Spieltag",
                 format_average_points(
-                    manager_point_stats["average"]
+                    manager_point_stats[
+                        "average"
+                    ]
                 ),
                 [
                     (
@@ -3702,8 +4147,8 @@ with st.expander(
                         "S11-Spielerdurchschnitten"
                     ),
                     (
-                        "Jeder Durchschnitt basiert auf "
-                        "den persönlichen Einsätzen"
+                        "Jeder Durchschnitt basiert "
+                        "auf den persönlichen Einsätzen"
                     ),
                 ],
                 "neutral",
@@ -3721,24 +4166,31 @@ with st.expander(
                     format_signed_currency(
                         realized_profit
                     )
-                    if realized_profit is not None
+                    if realized_profit
+                    is not None
                     else "—"
                 ),
                 [
                     "Gewinn aus abgeschlossenen Verkäufen"
                 ],
-                tone_of(realized_profit),
+                tone_of(
+                    realized_profit
+                ),
             ),
             (
                 "Im Verein",
                 format_signed_currency(
-                    stats["profit_in_club"]
+                    stats[
+                        "profit_in_club"
+                    ]
                 ),
                 [
                     "Noch nicht realisierter Gewinn"
                 ],
                 tone_of(
-                    stats["profit_in_club"]
+                    stats[
+                        "profit_in_club"
+                    ]
                 ),
             ),
             (
@@ -3810,12 +4262,14 @@ with st.expander(
                         if viewing_self
                         else (
                             f"{format_currency(BASE_BUDGET)} "
-                            "Grundwert plus Bonus und Gewinn, "
-                            "minus Kaderwert"
+                            "Grundwert plus Bonus und "
+                            "Gewinn, minus Kaderwert"
                         )
                     )
                 ],
-                tone_of(budget["balance"]),
+                tone_of(
+                    budget["balance"]
+                ),
             ),
             (
                 "Nach Verkauf",
@@ -3826,7 +4280,9 @@ with st.expander(
                     (
                         "Plus Trading: "
                         + format_currency(
-                            stats["trading_value"]
+                            stats[
+                                "trading_value"
+                            ]
                         )
                     ),
                     (
@@ -3851,7 +4307,9 @@ with st.expander(
                     (
                         "Trend Trading: "
                         + format_signed_currency(
-                            stats["trend_trading"]
+                            stats[
+                                "trend_trading"
+                            ]
                         )
                         + " pro Tag"
                     ),
@@ -3873,7 +4331,10 @@ st.subheader(
     (
         "Kader"
         if compact
-        else f"Kader von {selected_manager_name}"
+        else (
+            f"Kader von "
+            f"{selected_manager_name}"
+        )
     )
 )
 
@@ -3895,7 +4356,9 @@ if squad_error:
     )
 
 elif not players:
-    st.info("Keine Spieler gefunden.")
+    st.info(
+        "Keine Spieler gefunden."
+    )
 
 else:
     positions = {
@@ -3919,6 +4382,7 @@ else:
                 ),
                 "Unbekannt",
             )
+
         except (TypeError, ValueError):
             position = "Unbekannt"
 
@@ -3940,9 +4404,11 @@ else:
             "player-photo",
         )
 
-        club_logo_url = get_player_club_logo(
-            player,
-            teams,
+        club_logo_url = (
+            get_player_club_logo(
+                player,
+                teams,
+            )
         )
 
         club_logo = (
@@ -3954,28 +4420,52 @@ else:
             )
             if club_logo_url
             else (
-                f"<span>{escape(club_name)}</span>"
+                f"<span>"
+                f"{escape(club_name)}"
+                f"</span>"
                 if club_name
                 else ""
             )
         )
 
-        player_id = get_player_id(player)
-
-        stored_points = player_points_by_id.get(
-            player_id,
-            {},
+        player_id = get_player_id(
+            player
         )
 
-        total_points = stored_points.get(
-            "total"
+        stored_information = (
+            player_information_by_id.get(
+                player_id,
+                {},
+            )
         )
 
-        average_points = stored_points.get(
-            "average"
+        total_points = (
+            stored_information.get(
+                "total"
+            )
         )
 
-        team_id = get_team_id(player)
+        average_points = (
+            stored_information.get(
+                "average"
+            )
+        )
+
+        player_probability = (
+            stored_information.get(
+                "probability"
+            )
+        )
+
+        probability_badge = (
+            probability_badge_html(
+                player_probability
+            )
+        )
+
+        team_id = get_team_id(
+            player
+        )
 
         player_rows.append(
             {
@@ -3984,7 +4474,8 @@ else:
                     "<div class='player-cell'>"
                     f"{photo}"
                     f"{club_logo}"
-                    f"<span class='player-name'>"
+                    f"{probability_badge}"
+                    "<span class='player-name'>"
                     f"{escape(player_name)}"
                     "</span>"
                     "</div>"
@@ -3995,8 +4486,18 @@ else:
                     if is_in_lineup(player)
                     else "Trading"
                 ),
+                "S11-Prognose": (
+                    probability_label(
+                        player_probability
+                    )
+                ),
+                "_probability": (
+                    player_probability
+                ),
                 "Punkte": total_points,
-                "_average_points": average_points,
+                "_average_points": (
+                    average_points
+                ),
                 "Nächste Spiele": (
                     build_next_matches_text(
                         team_id,
@@ -4035,6 +4536,7 @@ else:
         "Spieler",
         "Position",
         "Status",
+        "S11-Prognose",
         "Punkte",
         "Nächste Spiele",
         "Einstandspreis",
@@ -4058,6 +4560,19 @@ else:
         player_frame,
         player_columns,
         compact,
+    )
+
+    st.markdown(
+        probability_legend_html(),
+        unsafe_allow_html=True,
+    )
+
+    st.caption(
+        "Die farbigen Symbole zeigen die "
+        "Startelfprognose aus dem Feld prob. "
+        "Die aktuelle eigene Kickbase-Aufstellung "
+        "wird weiterhin separat über den Status "
+        "Start 11 oder Trading angezeigt."
     )
 
     st.caption(
@@ -4084,7 +4599,9 @@ with st.expander(
             "Spieler auswählen",
             range(len(players)),
             format_func=lambda index: (
-                get_player_name(players[index])
+                get_player_name(
+                    players[index]
+                )
             ),
             key="diagnostic_player",
         )
@@ -4097,16 +4614,42 @@ with st.expander(
             inspect_player
         )
 
-        inspect_points = player_points_by_id.get(
-            inspect_player_id,
-            {},
+        inspect_information = (
+            player_information_by_id.get(
+                inspect_player_id,
+                {},
+            )
+        )
+
+        inspect_probability = (
+            inspect_information.get(
+                "probability"
+            )
+        )
+
+        st.markdown(
+            "S11-Prognose: "
+            + probability_badge_html(
+                inspect_probability
+            )
+            + " "
+            + escape(
+                probability_label(
+                    inspect_probability
+                )
+            ),
+            unsafe_allow_html=True,
         )
 
         st.markdown(
             "Punkte: "
             + points_cell_html(
-                inspect_points.get("total"),
-                inspect_points.get("average"),
+                inspect_information.get(
+                    "total"
+                ),
+                inspect_information.get(
+                    "average"
+                ),
             ),
             unsafe_allow_html=True,
         )
@@ -4131,7 +4674,8 @@ if not compact:
         "Diagnose Vereine und Spielplan"
     ):
         st.write(
-            f"Erkannte Vereine: {len(teams)}"
+            f"Erkannte Vereine: "
+            f"{len(teams)}"
         )
 
         st.write(
@@ -4166,7 +4710,9 @@ if not compact:
         st.write(
             "Punkte gesamt: "
             + format_points(
-                manager_point_stats["points"]
+                manager_point_stats[
+                    "points"
+                ]
             )
         )
 
@@ -4188,7 +4734,9 @@ if not compact:
 
         st.write(
             "Berücksichtigte S11-Spieler: "
-            + str(player_average_count)
+            + str(
+                player_average_count
+            )
         )
 
         if st.button(
@@ -4202,6 +4750,7 @@ if not compact:
                         selected_manager_id,
                     )
                 )
+
             except Exception as error:
                 sources = []
                 errors = [str(error)]
