@@ -4467,17 +4467,17 @@ else:
             player
         )
 
-        player_rows.append(
+         player_rows.append(
             {
                 "Spieler": player_name,
                 "_player_html": (
                     "<div class='player-cell'>"
                     f"{photo}"
                     f"{club_logo}"
-                    f"{probability_badge}"
                     "<span class='player-name'>"
                     f"{escape(player_name)}"
                     "</span>"
+                    f"{probability_badge}"
                     "</div>"
                 ),
                 "Position": position,
@@ -4485,11 +4485,6 @@ else:
                     "Start 11"
                     if is_in_lineup(player)
                     else "Trading"
-                ),
-                "S11-Prognose": (
-                    probability_label(
-                        player_probability
-                    )
                 ),
                 "_probability": (
                     player_probability
@@ -4536,7 +4531,6 @@ else:
         "Spieler",
         "Position",
         "Status",
-        "S11-Prognose",
         "Punkte",
         "Nächste Spiele",
         "Einstandspreis",
@@ -4544,7 +4538,6 @@ else:
         "Gewinn gesamt",
         "Trend 24 Stunden",
     ]
-
     player_frame = sort_frame(
         player_frame,
         player_columns,
