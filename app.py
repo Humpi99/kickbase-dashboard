@@ -4467,7 +4467,7 @@ else:
             player
         )
 
-         player_rows.append(
+        player_rows.append(
             {
                 "Spieler": player_name,
                 "_player_html": (
