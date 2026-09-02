@@ -1,17 +1,10 @@
 """
-Transfermarkt-Ansicht für das Kickbase-Dashboard.
+Schnelle Transfermarkt-Ansicht für das Kickbase-Dashboard.
 
-Darstellung:
-- Spielerliste mit höheren Zeilen
-- Spielerfoto
-- S11-Prognose aus dem Feld prob
-- Position und Verein
-- nächste Spiele
-- Marktwert
-- Änderung über 24 Stunden
-- Änderung über drei Tage
-- Punkte und Punktedurchschnitt
-- Kaufpreis, Anbieter und Angebotszeit
+Ladeablauf:
+1. Transfermarkt sofort aus den vorhandenen Marktdaten anzeigen.
+2. Spielerdetails auf Wunsch separat laden.
+3. Drei-Tage-Marktwertänderungen auf Wunsch separat laden.
 """
 
 from datetime import datetime, timedelta, timezone
@@ -342,11 +335,9 @@ def parse_datetime(value):
         return None
 
     if isinstance(value, str):
-        cleaned = value.strip()
-
         try:
             parsed = datetime.fromisoformat(
-                cleaned.replace("Z", "+00:00")
+                value.strip().replace("Z", "+00:00")
             )
 
             if parsed.tzinfo is None:
@@ -417,7 +408,7 @@ def format_signed_currency(value):
 
 
 def format_percentage(value):
-    """Formatiert eine Prozentänderung."""
+    """Formatiert einen Prozentwert."""
     number = to_number(value)
 
     if number is None:
@@ -435,7 +426,7 @@ def format_percentage(value):
 
 
 def format_points(value):
-    """Formatiert Punkte."""
+    """Formatiert Gesamtpunkte."""
     number = to_number(value)
 
     if number is None:
@@ -453,7 +444,7 @@ def format_points(value):
 
 
 def format_average_points(value):
-    """Formatiert den Punktedurchschnitt."""
+    """Formatiert Durchschnittspunkte."""
     number = to_number(value)
 
     if number is None:
@@ -507,7 +498,7 @@ def get_nested_dictionary(data, keys):
 
 
 def build_image_url(value):
-    """Erstellt eine vollständige Kickbase-Bildadresse."""
+    """Erstellt eine vollständige Bildadresse."""
     if not isinstance(value, str):
         return ""
 
@@ -540,13 +531,10 @@ def image_html(
     if not url:
         return ""
 
-    safe_url = escape(url)
-    safe_label = escape(str(label or ""))
-
     return (
-        f"<img src='{safe_url}' "
-        f"alt='{safe_label}' "
-        f"title='{safe_label}' "
+        f"<img src='{escape(url)}' "
+        f"alt='{escape(str(label or ''))}' "
+        f"title='{escape(str(label or ''))}' "
         f"class='{css_class}' "
         f"style='width:{size}px;"
         f"height:{size}px;' />"
@@ -580,7 +568,7 @@ def signed_value_html(value):
 # ---------------------------------------------------------
 
 def merge_market_item(item):
-    """Verbindet Angebot und verschachtelte Spielerdaten."""
+    """Verbindet Angebot und Spielerdaten."""
     if not isinstance(item, dict):
         return {}
 
@@ -595,6 +583,38 @@ def merge_market_item(item):
     merged = dict(player_data)
     merged.update(item)
     merged["_player_data"] = player_data
+
+    return merged
+
+
+def merge_detail_data(base_item, details):
+    """Ergänzt fehlende Werte durch Spielerdetails."""
+    merged = dict(base_item)
+
+    if not isinstance(details, dict):
+        return merged
+
+    candidates = [details]
+
+    for key in [
+        "player",
+        "data",
+        "item",
+        "pl",
+    ]:
+        nested = details.get(key)
+
+        if isinstance(nested, dict):
+            candidates.append(nested)
+
+    for candidate in candidates:
+        for key, value in candidate.items():
+            if (
+                key not in merged
+                or merged[key] is None
+                or merged[key] == ""
+            ):
+                merged[key] = value
 
     return merged
 
@@ -615,14 +635,14 @@ def get_player_id(item):
         if value is not None:
             return str(value)
 
-    player_data = get_nested_dictionary(
+    nested_player = get_nested_dictionary(
         item,
         PLAYER_CONTAINER_KEYS,
     )
 
-    if player_data:
+    if nested_player:
         value = first_value(
-            player_data,
+            nested_player,
             PLAYER_ID_KEYS,
         )
 
@@ -764,7 +784,7 @@ def get_daily_change(item):
 
 
 def get_direct_three_day_change(item):
-    """Sucht einen direkten Drei-Tage-Wert."""
+    """Sucht einen direkt vorhandenen Drei-Tage-Wert."""
     value = to_number(
         first_value(
             item,
@@ -789,7 +809,7 @@ def get_direct_three_day_change(item):
 
 
 def get_purchase_price(item):
-    """Ermittelt den Kauf- oder Angebotspreis."""
+    """Ermittelt den Angebots- oder Kaufpreis."""
     value = to_number(
         first_value(
             item,
@@ -912,8 +932,9 @@ def probability_label(value):
     if number is None:
         return "Keine Angabe"
 
-    probability = int(number)
-    information = S11_PROBABILITY.get(probability)
+    information = S11_PROBABILITY.get(
+        int(number)
+    )
 
     if not information:
         return "Keine Angabe"
@@ -929,7 +950,9 @@ def probability_badge_html(value):
         return ""
 
     probability = int(number)
-    information = S11_PROBABILITY.get(probability)
+    information = S11_PROBABILITY.get(
+        probability
+    )
 
     if not information:
         return ""
@@ -947,7 +970,7 @@ def probability_badge_html(value):
 
 
 def probability_legend_html():
-    """Erstellt die Legende der S11-Prognose."""
+    """Erstellt die Legende."""
     entries = []
 
     for probability, information in (
@@ -1315,6 +1338,7 @@ def extract_teams(sources):
                 team_id,
                 {
                     "name": "",
+                    "long_name": "",
                     "logo": "",
                 },
             )
@@ -1322,9 +1346,13 @@ def extract_teams(sources):
             if not entry["name"]:
                 entry["name"] = first_text(
                     item,
-                    TEAM_SHORT_NAME_KEYS
-                    + TEAM_NAME_KEYS
-                    + ["name", "n"],
+                    TEAM_SHORT_NAME_KEYS,
+                )
+
+            if not entry["long_name"]:
+                entry["long_name"] = first_text(
+                    item,
+                    TEAM_NAME_KEYS + ["name", "n"],
                 )
 
             if not entry["logo"]:
@@ -1334,6 +1362,10 @@ def extract_teams(sources):
                         TEAM_IMAGE_KEYS,
                     )
                 )
+
+    for entry in teams.values():
+        if not entry["name"]:
+            entry["name"] = entry["long_name"]
 
     return teams
 
@@ -1345,12 +1377,15 @@ def get_team_name(
 ):
     """Ermittelt den Vereinsnamen."""
     if team_id:
-        name = teams.get(
+        team = teams.get(
             str(team_id),
             {},
-        ).get(
-            "name",
-            "",
+        )
+
+        name = (
+            team.get("name")
+            or team.get("long_name")
+            or ""
         )
 
         if name:
@@ -1533,7 +1568,7 @@ def next_matches_text(
     next_matches,
     teams,
 ):
-    """Erstellt einen sortierbaren Spieltext."""
+    """Erstellt einen Text der nächsten Spiele."""
     entries = next_matches.get(
         str(team_id or ""),
         [],
@@ -1565,7 +1600,7 @@ def next_matches_html(
     teams,
     logo_size,
 ):
-    """Erstellt die Spielanzeige mit Vereinslogos."""
+    """Erstellt die Spielanzeige mit Logos."""
     entries = next_matches.get(
         str(team_id or ""),
         [],
@@ -1608,63 +1643,126 @@ def next_matches_html(
 
 
 # ---------------------------------------------------------
-# Spielerdetails und Marktwerthistorie
+# Schnelle Basiszeilen
 # ---------------------------------------------------------
 
-def merge_detail_data(base_item, detail_data):
-    """Ergänzt Marktdaten mit Spielerdetails."""
-    merged = dict(base_item)
+def create_fast_row(
+    item,
+    teams,
+    next_matches,
+):
+    """Erstellt ohne zusätzliche API-Aufrufe eine Zeile."""
+    player_id = get_player_id(item)
+    team_id = get_team_id(item)
 
-    if not isinstance(detail_data, dict):
-        return merged
+    direct_three_day_change = (
+        get_direct_three_day_change(item)
+    )
 
-    detail_candidates = [
-        detail_data,
-    ]
+    market_value = get_market_value(item)
 
-    for key in [
-        "player",
-        "data",
-        "item",
-        "pl",
-    ]:
-        nested = detail_data.get(key)
+    three_day_percentage = None
 
-        if isinstance(nested, dict):
-            detail_candidates.append(nested)
+    if (
+        direct_three_day_change is not None
+        and market_value is not None
+    ):
+        reference_value = (
+            market_value
+            - direct_three_day_change
+        )
 
-    for candidate in detail_candidates:
-        for key, value in candidate.items():
-            if (
-                key not in merged
-                or merged[key] is None
-                or merged[key] == ""
-            ):
-                merged[key] = value
+        if reference_value != 0:
+            three_day_percentage = (
+                direct_three_day_change
+                / reference_value
+                * 100
+            )
 
-    return merged
+    return {
+        "player_id": player_id,
+        "name": get_player_name(item),
+        "photo": get_player_photo(item),
+        "position": get_position(item),
+        "team_id": team_id,
+        "club": get_team_name(
+            team_id,
+            teams,
+            item,
+        ),
+        "club_logo": get_team_logo(
+            team_id,
+            teams,
+            item,
+        ),
+        "probability": get_probability(item),
+        "market_value": market_value,
+        "purchase_price": get_purchase_price(item),
+        "daily_change": get_daily_change(item),
+        "three_day_change": (
+            direct_three_day_change
+        ),
+        "three_day_percentage": (
+            three_day_percentage
+        ),
+        "points": get_points(item),
+        "average_points": get_average_points(item),
+        "seller": get_seller_name(item),
+        "remaining": format_remaining_time(item),
+        "matches_text": next_matches_text(
+            team_id,
+            next_matches,
+            teams,
+        ),
+        "matches_html": next_matches_html(
+            team_id,
+            next_matches,
+            teams,
+            TEAM_LOGO_SIZE,
+        ),
+        "details_loaded": False,
+        "history_loaded": (
+            direct_three_day_change is not None
+        ),
+        "detail_path": None,
+        "history_path": None,
+        "history_reference_date": None,
+        "history_points": [],
+        "raw": item,
+        "details": {},
+    }
 
 
-def load_player_details(
+# ---------------------------------------------------------
+# Spielerdetails separat laden
+# ---------------------------------------------------------
+
+def load_single_player_details(
     api,
     league_id,
     player_id,
 ):
-    """Lädt ergänzende Daten eines Spielers."""
+    """Lädt mit möglichst wenigen Anfragen Spielerdetails."""
+    cache_key = (
+        f"market_player_details_v2_"
+        f"{league_id}_{player_id}"
+    )
+
+    if cache_key in st.session_state:
+        return st.session_state[cache_key]
+
     paths = [
         f"/v4/players/{player_id}",
         (
             f"/v4/competitions/1"
             f"/players/{player_id}"
         ),
-        (
-            f"/v4/leagues/{league_id}"
-            f"/players/{player_id}"
-        ),
     ]
 
-    combined = {}
-    successful_paths = []
+    result = {
+        "data": {},
+        "path": None,
+    }
 
     for path in paths:
         try:
@@ -1673,32 +1771,175 @@ def load_player_details(
         except Exception:
             continue
 
-        successful_paths.append(path)
-        combined = merge_detail_data(
-            combined,
-            data,
-        )
+        result = {
+            "data": data,
+            "path": path,
+        }
 
-        if (
-            get_probability(combined) is not None
-            and get_player_photo(combined)
-            and get_team_id(combined)
-            and get_points(combined) is not None
-            and get_average_points(combined) is not None
-        ):
-            break
+        break
 
-    return combined, successful_paths
+    st.session_state[cache_key] = result
+
+    return result
+
+
+def enrich_row_with_details(
+    api,
+    league_id,
+    row,
+    teams,
+    next_matches,
+):
+    """Ergänzt eine Zeile mit Spielerdetails."""
+    player_id = row["player_id"]
+
+    result = load_single_player_details(
+        api,
+        league_id,
+        player_id,
+    )
+
+    details = result["data"]
+
+    if not details:
+        updated = dict(row)
+        updated["details_loaded"] = True
+        return updated
+
+    complete_item = merge_detail_data(
+        row["raw"],
+        details,
+    )
+
+    updated = dict(row)
+
+    new_team_id = (
+        get_team_id(complete_item)
+        or row["team_id"]
+    )
+
+    updated.update(
+        {
+            "name": get_player_name(
+                complete_item
+            ),
+            "photo": (
+                get_player_photo(complete_item)
+                or row["photo"]
+            ),
+            "position": get_position(
+                complete_item
+            ),
+            "team_id": new_team_id,
+            "club": get_team_name(
+                new_team_id,
+                teams,
+                complete_item,
+            ),
+            "club_logo": get_team_logo(
+                new_team_id,
+                teams,
+                complete_item,
+            ),
+            "probability": get_probability(
+                complete_item
+            ),
+            "market_value": (
+                get_market_value(complete_item)
+            ),
+            "daily_change": (
+                get_daily_change(complete_item)
+            ),
+            "points": get_points(
+                complete_item
+            ),
+            "average_points": (
+                get_average_points(complete_item)
+            ),
+            "matches_text": next_matches_text(
+                new_team_id,
+                next_matches,
+                teams,
+            ),
+            "matches_html": next_matches_html(
+                new_team_id,
+                next_matches,
+                teams,
+                TEAM_LOGO_SIZE,
+            ),
+            "details_loaded": True,
+            "detail_path": result["path"],
+            "details": details,
+        }
+    )
+
+    return updated
+
+
+# ---------------------------------------------------------
+# Drei-Tage-Historie separat laden
+# ---------------------------------------------------------
+
+def history_path_templates():
+    """Bekannte mögliche Historienpfade."""
+    return [
+        (
+            "/v4/players/{player_id}"
+            "/marketValue/{league_id}"
+        ),
+        (
+            "/v4/players/{player_id}"
+            "/marketvalue/{league_id}"
+        ),
+        (
+            "/v4/players/{player_id}"
+            "/market-value/{league_id}"
+        ),
+        (
+            "/v4/leagues/{league_id}"
+            "/players/{player_id}/marketValue"
+        ),
+        (
+            "/v4/leagues/{league_id}"
+            "/players/{player_id}/marketvalue"
+        ),
+        (
+            "/v4/competitions/1"
+            "/players/{player_id}/marketValue"
+        ),
+        (
+            "/v4/players/{player_id}"
+            "/marketValue"
+        ),
+        (
+            "/v4/players/{player_id}"
+            "/history"
+        ),
+    ]
+
+
+def create_history_path(
+    template,
+    league_id,
+    player_id,
+):
+    """Füllt einen Historienpfad aus."""
+    return template.format(
+        league_id=league_id,
+        player_id=player_id,
+    )
 
 
 def extract_history_points(data):
-    """Sucht datierte Marktwerte in einer Historie."""
+    """Sucht datierte Marktwerte."""
     points = []
 
     for item in collect_dictionaries(data):
-        date_value = first_value(
-            item,
-            HISTORY_DATE_KEYS,
+        date = parse_datetime(
+            first_value(
+                item,
+                HISTORY_DATE_KEYS,
+            )
         )
 
         market_value = to_number(
@@ -1707,8 +1948,6 @@ def extract_history_points(data):
                 HISTORY_VALUE_KEYS,
             )
         )
-
-        date = parse_datetime(date_value)
 
         if (
             date is None
@@ -1755,8 +1994,10 @@ def calculate_three_day_change(
     ):
         return None, None, None
 
-    now = datetime.now(timezone.utc)
-    target = now - timedelta(days=3)
+    target = (
+        datetime.now(timezone.utc)
+        - timedelta(days=3)
+    )
 
     candidates = [
         point
@@ -1797,250 +2038,146 @@ def calculate_three_day_change(
     )
 
 
-def load_three_day_history(
+def load_history_response(
     api,
     league_id,
     player_id,
-    current_market_value,
+    template,
 ):
-    """Probiert bekannte Historien-Endpunkte."""
-    paths = [
-        (
-            f"/v4/players/{player_id}"
-            f"/marketValue/{league_id}"
-        ),
-        (
-            f"/v4/players/{player_id}"
-            f"/marketvalue/{league_id}"
-        ),
-        (
-            f"/v4/players/{player_id}"
-            f"/market-value/{league_id}"
-        ),
-        (
-            f"/v4/leagues/{league_id}"
-            f"/players/{player_id}/marketValue"
-        ),
-        (
-            f"/v4/leagues/{league_id}"
-            f"/players/{player_id}/marketvalue"
-        ),
-        (
-            f"/v4/competitions/1"
-            f"/players/{player_id}/marketValue"
-        ),
-        (
-            f"/v4/players/{player_id}"
-            f"/marketValue"
-        ),
-        (
-            f"/v4/players/{player_id}"
-            f"/history"
-        ),
-    ]
+    """Lädt einen bereits bekannten Historienpfad."""
+    cache_key = (
+        f"market_history_v2_"
+        f"{league_id}_{player_id}_"
+        f"{abs(hash(template))}"
+    )
 
-    for path in paths:
-        try:
-            data = api.get(path)
+    if cache_key in st.session_state:
+        return st.session_state[cache_key]
 
-        except Exception:
-            continue
+    path = create_history_path(
+        template,
+        league_id,
+        player_id,
+    )
 
-        points = extract_history_points(data)
-
-        (
-            change,
-            percentage,
-            reference_date,
-        ) = calculate_three_day_change(
-            points,
-            current_market_value,
-        )
-
-        if change is not None:
-            return {
-                "change": change,
-                "percentage": percentage,
-                "reference_date": reference_date,
-                "path": path,
-                "points": points,
-            }
-
-    return {
-        "change": None,
-        "percentage": None,
-        "reference_date": None,
-        "path": None,
+    result = {
+        "path": path,
         "points": [],
     }
 
+    try:
+        data = api.get(path)
+        result["points"] = extract_history_points(
+            data
+        )
 
-# ---------------------------------------------------------
-# Transfermarktzeilen erstellen
-# ---------------------------------------------------------
+    except Exception:
+        pass
 
-def create_market_row(
+    st.session_state[cache_key] = result
+
+    return result
+
+
+def discover_history_template(
     api,
     league_id,
-    item,
-    teams,
-    next_matches,
+    rows,
 ):
-    """Erstellt eine vollständige Tabellenzeile."""
-    player_id = get_player_id(item)
+    """
+    Ermittelt den Historienpfad einmal.
 
-    details, detail_paths = (
-        load_player_details(
-            api,
-            league_id,
-            player_id,
-        )
+    Es werden höchstens drei Spieler zur Ermittlung
+    des passenden Endpunkts verwendet.
+    """
+    template_cache_key = (
+        f"market_history_template_v2_{league_id}"
     )
 
-    complete_item = merge_detail_data(
-        item,
-        details,
-    )
+    if template_cache_key in st.session_state:
+        return st.session_state[
+            template_cache_key
+        ]
 
-    market_value = get_market_value(
-        complete_item
-    )
+    candidate_rows = rows[:3]
 
-    direct_three_day_change = (
-        get_direct_three_day_change(
-            complete_item
-        )
-    )
-
-    history_information = {
-        "change": None,
-        "percentage": None,
-        "reference_date": None,
-        "path": None,
-        "points": [],
-    }
-
-    if direct_three_day_change is None:
-        history_information = (
-            load_three_day_history(
+    for template in history_path_templates():
+        for row in candidate_rows:
+            result = load_history_response(
                 api,
                 league_id,
-                player_id,
-                market_value,
-            )
-        )
-
-        three_day_change = (
-            history_information["change"]
-        )
-
-        three_day_percentage = (
-            history_information["percentage"]
-        )
-
-    else:
-        three_day_change = (
-            direct_three_day_change
-        )
-
-        reference_value = (
-            market_value
-            - three_day_change
-            if market_value is not None
-            else None
-        )
-
-        if (
-            reference_value is not None
-            and reference_value != 0
-        ):
-            three_day_percentage = (
-                three_day_change
-                / reference_value
-                * 100
+                row["player_id"],
+                template,
             )
 
-        else:
-            three_day_percentage = None
+            (
+                change,
+                _,
+                _,
+            ) = calculate_three_day_change(
+                result["points"],
+                row["market_value"],
+            )
 
-    team_id = get_team_id(
-        complete_item
+            if change is not None:
+                st.session_state[
+                    template_cache_key
+                ] = template
+
+                return template
+
+    st.session_state[
+        template_cache_key
+    ] = None
+
+    return None
+
+
+def enrich_row_with_history(
+    api,
+    league_id,
+    row,
+    template,
+):
+    """Ergänzt die Drei-Tage-Änderung."""
+    updated = dict(row)
+
+    if row["three_day_change"] is not None:
+        updated["history_loaded"] = True
+        return updated
+
+    if not template:
+        updated["history_loaded"] = True
+        return updated
+
+    result = load_history_response(
+        api,
+        league_id,
+        row["player_id"],
+        template,
     )
 
-    club_name = get_team_name(
-        team_id,
-        teams,
-        complete_item,
+    (
+        change,
+        percentage,
+        reference_date,
+    ) = calculate_three_day_change(
+        result["points"],
+        row["market_value"],
     )
 
-    club_logo = get_team_logo(
-        team_id,
-        teams,
-        complete_item,
+    updated.update(
+        {
+            "three_day_change": change,
+            "three_day_percentage": percentage,
+            "history_loaded": True,
+            "history_path": result["path"],
+            "history_reference_date": reference_date,
+            "history_points": result["points"],
+        }
     )
 
-    return {
-        "player_id": player_id,
-        "name": get_player_name(
-            complete_item
-        ),
-        "photo": get_player_photo(
-            complete_item
-        ),
-        "position": get_position(
-            complete_item
-        ),
-        "team_id": team_id,
-        "club": club_name,
-        "club_logo": club_logo,
-        "probability": get_probability(
-            complete_item
-        ),
-        "market_value": market_value,
-        "purchase_price": get_purchase_price(
-            complete_item
-        ),
-        "daily_change": get_daily_change(
-            complete_item
-        ),
-        "three_day_change": three_day_change,
-        "three_day_percentage": (
-            three_day_percentage
-        ),
-        "points": get_points(
-            complete_item
-        ),
-        "average_points": get_average_points(
-            complete_item
-        ),
-        "seller": get_seller_name(item),
-        "remaining": format_remaining_time(item),
-        "matches_text": next_matches_text(
-            team_id,
-            next_matches,
-            teams,
-        ),
-        "matches_html": next_matches_html(
-            team_id,
-            next_matches,
-            teams,
-            TEAM_LOGO_SIZE,
-        ),
-        "detail_paths": detail_paths,
-        "history_path": (
-            history_information["path"]
-        ),
-        "history_reference_date": (
-            history_information[
-                "reference_date"
-            ]
-        ),
-        "history_points": (
-            history_information["points"]
-        ),
-        "raw": item,
-        "details": details,
-    }
+    return updated
 
 
 # ---------------------------------------------------------
@@ -2051,7 +2188,7 @@ def player_cell_html(
     row,
     photo_size,
 ):
-    """Erstellt Spielerfoto, Namen und S11-Symbol."""
+    """Erstellt Spielerfoto, Name und S11-Symbol."""
     photo = image_html(
         row["photo"],
         row["name"],
@@ -2073,9 +2210,6 @@ def player_cell_html(
         "</span>"
         f"{badge}"
         "</div>"
-        f"<span class='market-player-id'>"
-        f"ID {escape(str(row['player_id']))}"
-        "</span>"
         "</div>"
         "</div>"
     )
@@ -2125,26 +2259,32 @@ def points_cell_html(row):
 def three_day_cell_html(row):
     """Zeigt Drei-Tage-Änderung und Prozentwert."""
     change = row["three_day_change"]
-    percentage = row["three_day_percentage"]
 
     if change is None:
+        if row["history_loaded"]:
+            title = (
+                "Keine auswertbare "
+                "Drei-Tage-Historie gefunden"
+            )
+
+        else:
+            title = (
+                "Drei-Tage-Werte wurden "
+                "noch nicht geladen"
+            )
+
         return (
             "<span class='market-no-history' "
-            "title='Keine auswertbare "
-            "Drei-Tage-Historie gefunden'>"
+            f"title='{escape(title)}'>"
             "—"
             "</span>"
         )
-
-    percentage_text = format_percentage(
-        percentage
-    )
 
     return (
         "<div class='market-trend-cell'>"
         f"{signed_value_html(change)}"
         "<span class='market-trend-percent'>"
-        f"{escape(percentage_text)}"
+        f"{escape(format_percentage(row['three_day_percentage']))}"
         "</span>"
         "</div>"
     )
@@ -2325,7 +2465,6 @@ MARKET_STYLE = """
 }
 
 .market-table td {
-    min-height: 62px;
     height: 62px;
     padding: 0.65rem;
     border-right: 1px solid var(--market-row-border);
@@ -2352,7 +2491,7 @@ MARKET_STYLE = """
 .market-player-cell {
     display: flex;
     align-items: center;
-    min-width: 190px;
+    min-width: 175px;
     gap: 0.65rem;
 }
 
@@ -2361,13 +2500,6 @@ MARKET_STYLE = """
     border-radius: 50%;
     object-fit: cover;
     background: var(--market-photo-background);
-}
-
-.market-player-text {
-    display: flex;
-    flex-direction: column;
-    min-width: 0;
-    gap: 0.15rem;
 }
 
 .market-player-name-line {
@@ -2379,11 +2511,6 @@ MARKET_STYLE = """
 .market-player-name {
     color: var(--market-text);
     font-weight: 750;
-}
-
-.market-player-id {
-    color: var(--market-muted);
-    font-size: 0.68rem;
 }
 
 .market-club-cell {
@@ -2517,7 +2644,6 @@ body[data-theme="dark"],
 @media (max-width: 640px) {
     .market-table td {
         height: 55px;
-        min-height: 55px;
         padding: 0.5rem;
     }
 
@@ -2538,183 +2664,14 @@ body[data-theme="dark"],
 
 
 # ---------------------------------------------------------
-# Hauptansicht
+# Filter und Sortierung
 # ---------------------------------------------------------
 
-def render_transfer_market(
-    api,
-    league_id,
-    compact=False,
+def filter_and_sort_rows(
+    rows,
+    compact,
 ):
-    """Rendert die vollständige Transfermarktansicht."""
-    st.markdown(
-        MARKET_STYLE,
-        unsafe_allow_html=True,
-    )
-
-    st.subheader("Transfermarkt")
-
-    st.caption(
-        "Die Drei-Tage-Änderung wird aus einer "
-        "verfügbaren Kickbase-Marktwerthistorie berechnet. "
-        "Fehlt eine auswertbare Historie, wird kein Wert geschätzt."
-    )
-
-    cache_key = (
-        f"transfer_market_list_v5_{league_id}"
-    )
-
-    if st.button(
-        "Transfermarkt neu laden",
-        key="reload_transfer_market",
-        use_container_width=compact,
-    ):
-        st.session_state.pop(
-            cache_key,
-            None,
-        )
-
-        st.rerun()
-
-    if cache_key not in st.session_state:
-        with st.spinner(
-            "Transfermarkt und Vereinsdaten "
-            "werden geladen …"
-        ):
-            try:
-                market_sources, market_errors = (
-                    api.get_market(league_id)
-                )
-
-            except Exception as error:
-                market_sources = []
-                market_errors = [str(error)]
-
-            try:
-                competition_sources, _ = (
-                    api.get_competition()
-                )
-
-            except Exception:
-                competition_sources = []
-
-            try:
-                team_sources, _ = (
-                    api.get_teams()
-                )
-
-            except Exception:
-                team_sources = []
-
-            try:
-                match_sources, _ = (
-                    api.get_matches(league_id)
-                )
-
-            except Exception:
-                match_sources = []
-
-            team_data_sources = (
-                competition_sources
-                + team_sources
-                + match_sources
-            )
-
-            teams = extract_teams(
-                team_data_sources
-            )
-
-            matches = extract_matches(
-                match_sources
-            )
-
-            next_matches = build_next_matches(
-                matches
-            )
-
-            items = extract_market_items(
-                market_sources
-            )
-
-            rows = []
-
-            if items:
-                progress = st.progress(
-                    0.0,
-                    text=(
-                        "Spielerdetails und Historien "
-                        "werden geladen …"
-                    ),
-                )
-
-                for index, item in enumerate(
-                    items
-                ):
-                    rows.append(
-                        create_market_row(
-                            api,
-                            league_id,
-                            item,
-                            teams,
-                            next_matches,
-                        )
-                    )
-
-                    progress.progress(
-                        (index + 1) / len(items),
-                        text=(
-                            "Spielerdetails und Historien "
-                            "werden geladen … "
-                            f"{index + 1} von "
-                            f"{len(items)}"
-                        ),
-                    )
-
-                progress.empty()
-
-            st.session_state[cache_key] = {
-                "rows": rows,
-                "sources": market_sources,
-                "errors": market_errors,
-                "teams": teams,
-            }
-
-    market_data = st.session_state[
-        cache_key
-    ]
-
-    rows = market_data["rows"]
-    sources = market_data["sources"]
-    errors = market_data["errors"]
-
-    if not rows:
-        st.warning(
-            "Es konnten keine Marktspieler sicher "
-            "erkannt werden."
-        )
-
-        if sources:
-            with st.expander(
-                "Diagnose der Transfermarkt-Rohdaten",
-                expanded=True,
-            ):
-                for source in sources:
-                    st.write(
-                        f"**{source['path']}**"
-                    )
-
-                    st.json(
-                        source["data"]
-                    )
-
-        if errors:
-            with st.expander(
-                "Fehler der Markt-Endpunkte"
-            ):
-                st.write(errors)
-
-        return
-
+    """Filtert und sortiert die Marktspieler."""
     positions = sorted(
         {
             row["position"]
@@ -2755,12 +2712,10 @@ def render_transfer_market(
             key="market_positions",
         )
 
-        selected_probabilities = (
-            st.multiselect(
-                "S11-Prognose",
-                probability_options,
-                key="market_probabilities",
-            )
+        selected_probabilities = st.multiselect(
+            "S11-Prognose",
+            probability_options,
+            key="market_probabilities",
         )
 
         sort_name = st.selectbox(
@@ -2831,9 +2786,7 @@ def render_transfer_market(
     filtered_rows = list(rows)
 
     if search:
-        search_text = (
-            search.strip().lower()
-        )
+        search_text = search.strip().lower()
 
         filtered_rows = [
             row
@@ -2867,12 +2820,8 @@ def render_transfer_market(
     sort_fields = {
         "Marktwert": "market_value",
         "Kaufpreis": "purchase_price",
-        "Änderung 24 Stunden": (
-            "daily_change"
-        ),
-        "Änderung 3 Tage": (
-            "three_day_change"
-        ),
+        "Änderung 24 Stunden": "daily_change",
+        "Änderung 3 Tage": "three_day_change",
         "Änderung 3 Tage in Prozent": (
             "three_day_percentage"
         ),
@@ -2882,25 +2831,20 @@ def render_transfer_market(
         "Name": "name",
     }
 
-    sort_field = sort_fields[
-        sort_name
-    ]
-
+    sort_field = sort_fields[sort_name]
     reverse = (
         sort_direction == "Absteigend"
     )
 
     if sort_field == "name":
-        filtered_rows = sorted(
+        return sorted(
             filtered_rows,
-            key=lambda row: (
-                row["name"].lower()
-            ),
+            key=lambda row: row["name"].lower(),
             reverse=reverse,
         )
 
-    elif sort_field == "probability":
-        filtered_rows = sorted(
+    if sort_field == "probability":
+        return sorted(
             filtered_rows,
             key=lambda row: (
                 row["probability"]
@@ -2910,21 +2854,341 @@ def render_transfer_market(
             reverse=reverse,
         )
 
-    else:
-        filtered_rows = sorted(
-            filtered_rows,
-            key=lambda row: (
-                to_number(
-                    row[sort_field]
-                )
-                is not None,
-                to_number(
-                    row[sort_field]
-                )
-                or 0,
-            ),
-            reverse=reverse,
+    return sorted(
+        filtered_rows,
+        key=lambda row: (
+            to_number(row[sort_field])
+            is not None,
+            to_number(row[sort_field]) or 0,
+        ),
+        reverse=reverse,
+    )
+
+
+# ---------------------------------------------------------
+# Hauptansicht
+# ---------------------------------------------------------
+
+def render_transfer_market(
+    api,
+    league_id,
+    compact=False,
+):
+    """Rendert die schnelle Transfermarktansicht."""
+    st.markdown(
+        MARKET_STYLE,
+        unsafe_allow_html=True,
+    )
+
+    st.subheader("Transfermarkt")
+
+    st.caption(
+        "Die Marktliste wird zuerst ohne langsame "
+        "Einzelabfragen angezeigt. Spielerdetails und "
+        "Drei-Tage-Werte kannst du danach separat laden."
+    )
+
+    cache_key = (
+        f"transfer_market_fast_v1_{league_id}"
+    )
+
+    if st.button(
+        "Transfermarkt neu laden",
+        key="reload_transfer_market",
+        use_container_width=compact,
+    ):
+        st.session_state.pop(
+            cache_key,
+            None,
         )
+
+        st.session_state.pop(
+            f"market_history_template_v2_{league_id}",
+            None,
+        )
+
+        st.rerun()
+
+    if cache_key not in st.session_state:
+        with st.spinner(
+            "Transfermarkt wird geladen …"
+        ):
+            try:
+                market_sources, market_errors = (
+                    api.get_market(league_id)
+                )
+
+            except Exception as error:
+                market_sources = []
+                market_errors = [str(error)]
+
+            existing_context = (
+                st.session_state.get(
+                    f"team_matches_v11_{league_id}"
+                )
+            )
+
+            if existing_context:
+                teams = existing_context.get(
+                    "teams",
+                    {},
+                )
+
+                next_matches = (
+                    existing_context.get(
+                        "next_matches",
+                        {},
+                    )
+                )
+
+            else:
+                try:
+                    team_sources, _ = (
+                        api.get_teams()
+                    )
+
+                except Exception:
+                    team_sources = []
+
+                try:
+                    match_sources, _ = (
+                        api.get_matches(
+                            league_id
+                        )
+                    )
+
+                except Exception:
+                    match_sources = []
+
+                teams = extract_teams(
+                    team_sources
+                    + match_sources
+                )
+
+                next_matches = build_next_matches(
+                    extract_matches(
+                        match_sources
+                    )
+                )
+
+            items = extract_market_items(
+                market_sources
+            )
+
+            rows = [
+                create_fast_row(
+                    item,
+                    teams,
+                    next_matches,
+                )
+                for item in items
+            ]
+
+            st.session_state[cache_key] = {
+                "rows": rows,
+                "sources": market_sources,
+                "errors": market_errors,
+                "teams": teams,
+                "next_matches": next_matches,
+            }
+
+    market_data = st.session_state[
+        cache_key
+    ]
+
+    rows = market_data["rows"]
+    sources = market_data["sources"]
+    errors = market_data["errors"]
+    teams = market_data["teams"]
+    next_matches = market_data[
+        "next_matches"
+    ]
+
+    if not rows:
+        st.warning(
+            "Es konnten keine Marktspieler sicher "
+            "erkannt werden."
+        )
+
+        if sources:
+            with st.expander(
+                "Diagnose der Transfermarkt-Rohdaten",
+                expanded=True,
+            ):
+                for source in sources:
+                    st.write(
+                        f"**{source['path']}**"
+                    )
+
+                    st.json(
+                        source["data"]
+                    )
+
+        if errors:
+            with st.expander(
+                "Fehler der Markt-Endpunkte"
+            ):
+                st.write(errors)
+
+        return
+
+    details_loaded = all(
+        row["details_loaded"]
+        for row in rows
+    )
+
+    history_loaded = all(
+        row["history_loaded"]
+        for row in rows
+    )
+
+    detail_column, history_column = (
+        st.columns(2)
+    )
+
+    with detail_column:
+        detail_button_text = (
+            "Spielerdetails neu laden"
+            if details_loaded
+            else (
+                "Spielerfotos, Vereine und "
+                "S11-Prognosen laden"
+            )
+        )
+
+        load_details = st.button(
+            detail_button_text,
+            key="load_market_details",
+            use_container_width=True,
+        )
+
+    with history_column:
+        history_button_text = (
+            "Drei-Tage-Werte neu laden"
+            if history_loaded
+            else "Drei-Tage-Werte laden"
+        )
+
+        load_history = st.button(
+            history_button_text,
+            key="load_market_history",
+            use_container_width=True,
+        )
+
+    if load_details:
+        progress = st.progress(
+            0.0,
+            text=(
+                "Spielerdetails werden geladen …"
+            ),
+        )
+
+        updated_rows = []
+
+        for index, row in enumerate(rows):
+            updated_rows.append(
+                enrich_row_with_details(
+                    api,
+                    league_id,
+                    row,
+                    teams,
+                    next_matches,
+                )
+            )
+
+            progress.progress(
+                (index + 1) / len(rows),
+                text=(
+                    "Spielerdetails werden geladen … "
+                    f"{index + 1} von {len(rows)}"
+                ),
+            )
+
+        progress.empty()
+
+        market_data["rows"] = updated_rows
+        st.session_state[cache_key] = (
+            market_data
+        )
+
+        st.rerun()
+
+    if load_history:
+        with st.spinner(
+            "Passenden Historien-Endpunkt "
+            "ermitteln …"
+        ):
+            template = (
+                discover_history_template(
+                    api,
+                    league_id,
+                    rows,
+                )
+            )
+
+        if template is None:
+            market_data["rows"] = [
+                {
+                    **row,
+                    "history_loaded": True,
+                }
+                for row in rows
+            ]
+
+            st.session_state[cache_key] = (
+                market_data
+            )
+
+            st.warning(
+                "Kickbase hat über die getesteten "
+                "Endpunkte keine auswertbare "
+                "Drei-Tage-Historie geliefert."
+            )
+
+        else:
+            progress = st.progress(
+                0.0,
+                text=(
+                    "Drei-Tage-Werte werden geladen …"
+                ),
+            )
+
+            updated_rows = []
+
+            for index, row in enumerate(rows):
+                updated_rows.append(
+                    enrich_row_with_history(
+                        api,
+                        league_id,
+                        row,
+                        template,
+                    )
+                )
+
+                progress.progress(
+                    (index + 1) / len(rows),
+                    text=(
+                        "Drei-Tage-Werte werden geladen … "
+                        f"{index + 1} von {len(rows)}"
+                    ),
+                )
+
+            progress.empty()
+
+            market_data["rows"] = (
+                updated_rows
+            )
+
+            st.session_state[cache_key] = (
+                market_data
+            )
+
+            st.rerun()
+
+    filtered_rows = filter_and_sort_rows(
+        rows,
+        compact,
+    )
 
     st.caption(
         f"{len(filtered_rows)} von "
@@ -2949,10 +3213,19 @@ def render_transfer_market(
         unsafe_allow_html=True,
     )
 
-    st.caption(
-        "Die S11-Prognose steht als farbiges Symbol "
-        "direkt rechts neben dem Spielernamen."
-    )
+    if not details_loaded:
+        st.info(
+            "Für vollständige Spielerfotos, Vereinsdaten "
+            "und S11-Symbole klicke oben auf "
+            "„Spielerfotos, Vereine und "
+            "S11-Prognosen laden“."
+        )
+
+    if not history_loaded:
+        st.info(
+            "Die Spalte „3 Tage“ bleibt leer, bis du "
+            "oben auf „Drei-Tage-Werte laden“ klickst."
+        )
 
     if not compact:
         with st.expander(
@@ -2963,7 +3236,7 @@ def render_transfer_market(
                 for row in filtered_rows
             ]
 
-            selected_player_name = st.selectbox(
+            selected_name = st.selectbox(
                 "Spieler auswählen",
                 player_names,
                 key="market_diagnostic_player",
@@ -2972,27 +3245,24 @@ def render_transfer_market(
             selected_row = next(
                 row
                 for row in filtered_rows
-                if row["name"]
-                == selected_player_name
+                if row["name"] == selected_name
             )
 
             st.write(
-                "**Verwendete Detail-Endpunkte:**"
+                "**Verwendeter Detail-Endpunkt:**"
             )
 
-            if selected_row["detail_paths"]:
-                for path in selected_row[
-                    "detail_paths"
-                ]:
-                    st.code(
-                        path,
-                        language="text",
-                    )
+            if selected_row["detail_path"]:
+                st.code(
+                    selected_row["detail_path"],
+                    language="text",
+                )
 
             else:
                 st.write(
-                    "Kein Detail-Endpunkt "
-                    "konnte geladen werden."
+                    "Spielerdetails wurden noch nicht "
+                    "geladen oder der Endpunkt war "
+                    "nicht erreichbar."
                 )
 
             st.write(
@@ -3001,38 +3271,23 @@ def render_transfer_market(
 
             if selected_row["history_path"]:
                 st.code(
-                    selected_row[
-                        "history_path"
-                    ],
+                    selected_row["history_path"],
                     language="text",
                 )
 
-                reference_date = selected_row[
-                    "history_reference_date"
-                ]
-
-                if reference_date:
-                    st.write(
-                        "Vergleichswert vom: "
-                        + reference_date.strftime(
-                            "%d.%m.%Y %H:%M"
-                        )
-                    )
-
             else:
                 st.write(
-                    "Keine auswertbare "
-                    "Drei-Tage-Historie gefunden."
+                    "Die Drei-Tage-Historie wurde noch "
+                    "nicht geladen oder konnte nicht "
+                    "ermittelt werden."
                 )
 
             st.write(
-                "**Erkannte Historienwerte:**"
+                "**Transfermarkt-Rohdaten:**"
             )
 
             st.json(
-                selected_row[
-                    "history_points"
-                ],
+                selected_row["raw"],
                 expanded=False,
             )
 
@@ -3042,15 +3297,6 @@ def render_transfer_market(
 
             st.json(
                 selected_row["details"],
-                expanded=False,
-            )
-
-            st.write(
-                "**Transfermarkt-Rohdaten:**"
-            )
-
-            st.json(
-                selected_row["raw"],
                 expanded=False,
             )
 
