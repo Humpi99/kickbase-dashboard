@@ -2206,7 +2206,7 @@ def player_cell_html(
         "<div class='market-player-text'>"
         "<div class='market-player-name-line'>"
         f"<span class='market-player-name'>"
-        f"{escape(row['name'])}"
+        f"{escape(row['short_name'])}"
         "</span>"
         f"{badge}"
         "</div>"
