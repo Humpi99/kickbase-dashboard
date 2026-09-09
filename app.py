@@ -1274,9 +1274,9 @@ def collect_manager_seasons(value, depth=0):
                     ),
                     "id": season_id,
                     "points": (
-                        accumulated_points
-                        if accumulated_points is not None
-                        else total_points
+                        total_points
+                        if total_points is not None
+                        else accumulated_points
                     ),
                     "played_matchdays": (
                         count_played_matchdays(value)
