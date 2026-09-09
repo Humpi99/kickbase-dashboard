@@ -701,6 +701,33 @@ def get_player_name(item):
     return "Unbekannter Spieler"
 
 
+def get_short_player_name(item):
+    """Ermittelt den Nachnamen des Spielers."""
+    last_name = first_value(
+        item,
+        LAST_NAME_KEYS,
+    )
+
+    if last_name:
+        return str(last_name)
+
+    player_data = get_nested_dictionary(
+        item,
+        PLAYER_CONTAINER_KEYS,
+    )
+
+    if player_data:
+        nested_last_name = first_value(
+            player_data,
+            LAST_NAME_KEYS,
+        )
+
+        if nested_last_name:
+            return str(nested_last_name)
+
+    return get_player_name(item)
+
+
 def get_position(item):
     """Ermittelt die Spielerposition."""
     value = first_value(
@@ -1682,6 +1709,7 @@ def create_fast_row(
     return {
         "player_id": player_id,
         "name": get_player_name(item),
+        "short_name": get_short_player_name(item),
         "photo": get_player_photo(item),
         "position": get_position(item),
         "team_id": team_id,
@@ -1821,6 +1849,9 @@ def enrich_row_with_details(
     updated.update(
         {
             "name": get_player_name(
+                complete_item
+            ),
+            "short_name": get_short_player_name(
                 complete_item
             ),
             "photo": (
