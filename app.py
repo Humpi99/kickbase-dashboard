@@ -3671,23 +3671,26 @@ suggested_bonus = (
     else 0.0
 )
 
-bonus_key = f"bonus_mio_{league_id}"
+bonus_extra_key = f"bonus_extra_mio_{league_id}"
 
-if bonus_key not in st.session_state:
-    st.session_state[bonus_key] = round(
-        suggested_bonus,
-        2,
-    )
+if bonus_extra_key not in st.session_state:
+    st.session_state[bonus_extra_key] = 0.0
 
-bonus_mio = st.sidebar.number_input(
-    "Bonus in Mio. €",
-    min_value=-200.0,
-    max_value=500.0,
+bonus_extra_mio = st.sidebar.number_input(
+    "Bonus-Zuschlag in Mio. €",
+    min_value=-50.0,
+    max_value=200.0,
     step=0.5,
-    key=bonus_key,
+    key=bonus_extra_key,
+    help=(
+        "Pauschalbetrag, der allen Managern "
+        "zusätzlich zum berechneten Bonus "
+        "angerechnet wird (z.B. für MVP, "
+        "Transfers)."
+    ),
 )
 
-bonus = bonus_mio * 1_000_000
+bonus_extra = bonus_extra_mio * 1_000_000
 
 if st.sidebar.button(
     "Bonus neu berechnen",
@@ -3703,6 +3706,7 @@ if st.sidebar.button(
             or state_key.startswith(
                 f"league_rows_v20_{league_id}"
             )
+            or state_key == bonus_extra_key
         ):
             st.session_state.pop(
                 state_key,
@@ -3933,6 +3937,7 @@ if view == "Liga":
     league_frame["Budget"] = (
         BASE_BUDGET
         + league_frame["Bonus"]
+        + bonus_extra
         + league_frame["Gewinn gesamt"]
         - league_frame["Kaderwert"]
     )
