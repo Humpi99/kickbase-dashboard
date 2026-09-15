@@ -3,12 +3,6 @@ Development-Bereich für das Kickbase-Dashboard.
 
 Untersucht die Kickbase-API, um für jeden Manager
 automatisch die Bonuskriterien ableiten zu können.
-
-Untersuchte Bereiche:
-- Spieltagsergebnisse je Manager (Punkte pro Spieltag)
-- Einzelspieler-Punkte je Spieltag
-- MVP-Daten
-- Transferhistorie
 """
 
 import json
@@ -116,13 +110,8 @@ BONUS_RULES = [
         "category": "Team-Punkte",
         "description": "1.000+ Punkte ganzes Team",
         "bonus": 250_000,
-        "needed_data": (
-            "Gesamtpunkte des Managers je Spieltag"
-        ),
-        "api_hint": (
-            "mdp-Feld in den Spieltag-Einträgen "
-            "der Manager-Saisondaten"
-        ),
+        "needed_data": "Gesamtpunkte des Managers je Spieltag",
+        "api_hint": "mdp-Feld in den Spieltag-Einträgen der Manager-Saisondaten",
     },
     {
         "id": "team_1500",
@@ -145,14 +134,8 @@ BONUS_RULES = [
         "category": "Transfergewinn",
         "description": "3 Mio. Transfergewinn",
         "bonus": 250_000,
-        "needed_data": (
-            "Transferhistorie: Kauf- und "
-            "Verkaufspreis je Spieler"
-        ),
-        "api_hint": (
-            "Manager-Transfer- oder "
-            "Activities-Endpunkte"
-        ),
+        "needed_data": "Transferhistorie: Kauf- und Verkaufspreis je Spieler",
+        "api_hint": "Manager-Transfer- oder Activities-Endpunkte",
     },
     {
         "id": "transfer_5m",
@@ -201,20 +184,9 @@ DEV_STYLE = """
     --dev-highlight: #eaf6ef;
 }
 
-.dev-status-found {
-    color: var(--dev-success);
-    font-weight: 700;
-}
-
-.dev-status-missing {
-    color: var(--dev-error);
-    font-weight: 700;
-}
-
-.dev-status-partial {
-    color: var(--dev-warning);
-    font-weight: 700;
-}
+.dev-status-found { color: var(--dev-success); font-weight: 700; }
+.dev-status-missing { color: var(--dev-error); font-weight: 700; }
+.dev-status-partial { color: var(--dev-warning); font-weight: 700; }
 
 .dev-endpoint-path {
     padding: 0.5rem 0.7rem;
@@ -253,8 +225,17 @@ DEV_STYLE = """
     vertical-align: top;
 }
 
+.dev-data-table td.right {
+    text-align: right;
+}
+
 .dev-highlight-row td {
     background: var(--dev-highlight);
+}
+
+.dev-total-row td {
+    background: var(--dev-header-bg);
+    font-weight: 700;
 }
 
 html[data-theme="dark"],
@@ -275,10 +256,7 @@ body[data-theme="dark"],
 </style>
 """
 
-st.markdown(
-    DEV_STYLE,
-    unsafe_allow_html=True,
-)
+st.markdown(DEV_STYLE, unsafe_allow_html=True)
 
 
 # ---------------------------------------------------------
@@ -288,21 +266,17 @@ st.markdown(
 def first_value(data, keys, default=None):
     if not isinstance(data, dict):
         return default
-
     for key in keys:
         if key in data and data[key] is not None:
             return data[key]
-
     return default
 
 
 def to_number(value):
     if value is None or value == "":
         return None
-
     if isinstance(value, bool):
         return None
-
     try:
         return float(value)
     except (TypeError, ValueError):
@@ -310,184 +284,67 @@ def to_number(value):
 
 
 def get_league_id(league):
-    value = first_value(
-        league,
-        ["id", "i", "leagueId", "li"],
-        "",
-    )
-
+    value = first_value(league, ["id", "i", "leagueId", "li"], "")
     return str(value) if value else ""
 
 
 def get_league_name(league):
-    return str(
-        first_value(
-            league,
-            ["name", "n", "leagueName", "ln"],
-            "Unbekannte Liga",
-        )
-    )
+    return str(first_value(league, ["name", "n", "leagueName", "ln"], "Unbekannte Liga"))
 
 
 def get_manager_id(manager):
-    value = first_value(
-        manager,
-        [
-            "id",
-            "i",
-            "u",
-            "userId",
-            "uid",
-            "ui",
-        ],
-        "",
-    )
-
+    value = first_value(manager, ["id", "i", "u", "userId", "uid", "ui"], "")
     return str(value) if value else ""
 
 
 def get_manager_name(manager):
-    return str(
-        first_value(
-            manager,
-            [
-                "name",
-                "unm",
-                "n",
-                "username",
-                "un",
-                "teamName",
-                "tn",
-            ],
-            "Unbekannter Manager",
-        )
-    )
+    return str(first_value(
+        manager,
+        ["name", "unm", "n", "username", "un", "teamName", "tn"],
+        "Unbekannter Manager",
+    ))
 
 
 def looks_like_manager(item):
     if not isinstance(item, dict):
         return False
-
     if not get_manager_id(item):
         return False
-
     if get_manager_name(item) == "Unbekannter Manager":
         return False
-
-    markers = {
-        "unm",
-        "u",
-        "userId",
-        "uid",
-        "ui",
-        "tv",
-        "teamValue",
-        "placement",
-        "rank",
-        "shp",
-        "uim",
-    }
-
+    markers = {"unm", "u", "userId", "uid", "ui", "tv", "teamValue", "placement", "rank", "shp", "uim"}
     return bool(markers.intersection(item.keys()))
 
 
 def find_manager_list(value, depth=0):
     if depth > 8:
         return []
-
     if isinstance(value, list):
-        managers = [
-            item
-            for item in value
-            if looks_like_manager(item)
-        ]
-
+        managers = [item for item in value if looks_like_manager(item)]
         if managers:
             return managers
-
         for item in value:
-            result = find_manager_list(
-                item,
-                depth + 1,
-            )
-
+            result = find_manager_list(item, depth + 1)
             if result:
                 return result
-
     elif isinstance(value, dict):
-        for key in [
-            "us",
-            "users",
-            "managers",
-            "ranking",
-            "items",
-            "it",
-        ]:
+        for key in ["us", "users", "managers", "ranking", "items", "it"]:
             if key in value:
-                result = find_manager_list(
-                    value[key],
-                    depth + 1,
-                )
-
+                result = find_manager_list(value[key], depth + 1)
                 if result:
                     return result
-
         for key, nested in value.items():
-            if key in {
-                "tkn",
-                "token",
-                "accessToken",
-            }:
+            if key in {"tkn", "token", "accessToken"}:
                 continue
-
-            result = find_manager_list(
-                nested,
-                depth + 1,
-            )
-
+            result = find_manager_list(nested, depth + 1)
             if result:
                 return result
-
     return []
-
-
-def collect_dictionaries(data, depth=0):
-    found = []
-
-    if depth > 10:
-        return found
-
-    if isinstance(data, dict):
-        found.append(data)
-
-        for value in data.values():
-            found.extend(
-                collect_dictionaries(
-                    value,
-                    depth + 1,
-                )
-            )
-
-    elif isinstance(data, list):
-        for item in data:
-            found.extend(
-                collect_dictionaries(
-                    item,
-                    depth + 1,
-                )
-            )
-
-    return found
 
 
 def safe_json(value):
     try:
-        return json.dumps(
-            value,
-            ensure_ascii=False,
-            indent=2,
-            default=str,
-        )
+        return json.dumps(value, ensure_ascii=False, indent=2, default=str)
     except Exception:
         return str(value)
 
@@ -496,17 +353,29 @@ def format_bonus(value):
     if value >= 1_000_000:
         amount = value / 1_000_000
         text = f"{amount:,.2f}"
-        text = text.replace(",", "X")
-        text = text.replace(".", ",")
-        text = text.replace("X", ".")
-
+        text = text.replace(",", "X").replace(".", ",").replace("X", ".")
         return f"{text} Mio. €"
-
     amount = value / 1_000
     text = f"{amount:,.0f}"
     text = text.replace(",", ".")
-
     return f"{text} k €"
+
+
+def format_compact(value):
+    """Kompakte Darstellung für die Tabelle."""
+    if value == 0:
+        return "—"
+    if value >= 1_000_000:
+        amount = value / 1_000_000
+        if amount == int(amount):
+            return f"{int(amount)}M"
+        return f"{amount:.1f}M"
+    if value >= 1_000:
+        amount = value / 1_000
+        if amount == int(amount):
+            return f"{int(amount)}k"
+        return f"{amount:.0f}k"
+    return str(int(value))
 
 
 # ---------------------------------------------------------
@@ -514,100 +383,11 @@ def format_bonus(value):
 # ---------------------------------------------------------
 
 def try_endpoint(api, path):
-    """Ruft einen Endpunkt auf und gibt Ergebnis zurück."""
     try:
         data = api.get(path)
-
-        return {
-            "path": path,
-            "success": True,
-            "data": data,
-            "error": None,
-        }
-
+        return {"path": path, "success": True, "data": data, "error": None}
     except Exception as error:
-        return {
-            "path": path,
-            "success": False,
-            "data": None,
-            "error": str(error),
-        }
-
-
-def load_manager_bonus_data(
-    api,
-    league_id,
-    manager_id,
-):
-    """Lädt alle bonusrelevanten Endpunkte eines Managers."""
-    base = (
-        f"/v4/leagues/{league_id}"
-        f"/managers/{manager_id}"
-    )
-
-    user_base = (
-        f"/v4/leagues/{league_id}"
-        f"/users/{manager_id}"
-    )
-
-    matchday_paths = [
-        f"{base}/performance",
-        f"{base}/dashboard",
-        f"{base}/points",
-        f"{base}/history",
-        base,
-        f"{user_base}/stats",
-        f"{user_base}/profile",
-    ]
-
-    transfer_paths = [
-        f"{base}/transfers",
-        f"{base}/activities",
-        f"{base}/activitiesFeed",
-        f"{base}/feed",
-    ]
-
-    matchday_detail_paths = [
-        f"/v4/leagues/{league_id}/matchdays",
-        f"/v4/leagues/{league_id}/matchday",
-        f"/v4/competitions/1/matchdays",
-        f"/v4/competitions/1/matchday",
-    ]
-
-    league_feed_paths = [
-        f"/v4/leagues/{league_id}/activitiesFeed",
-        f"/v4/leagues/{league_id}/activities",
-        f"/v4/leagues/{league_id}/feed",
-    ]
-
-    results = {
-        "matchday": [],
-        "transfers": [],
-        "matchday_details": [],
-        "league_feed": [],
-    }
-
-    for path in matchday_paths:
-        result = try_endpoint(api, path)
-        if result["success"]:
-            results["matchday"].append(result)
-
-    for path in transfer_paths:
-        result = try_endpoint(api, path)
-        if result["success"]:
-            results["transfers"].append(result)
-
-    for path in matchday_detail_paths:
-        result = try_endpoint(api, path)
-        if result["success"]:
-            results["matchday_details"].append(result)
-
-    for path in league_feed_paths:
-        result = try_endpoint(api, path)
-        if result["success"]:
-            results["league_feed"].append(result)
-
-    return results
+        return {"path": path, "success": False, "data": None, "error": str(error)}
 
 
 # ---------------------------------------------------------
@@ -626,34 +406,26 @@ def extract_current_season_matchdays(data, depth=0):
             now = datetime.now()
             start_year = now.year if now.month >= 7 else now.year - 1
             expected_name = f"{start_year}/{start_year + 1}"
-            is_current = str(season_name) == expected_name
 
-            if not is_current:
+            if str(season_name) != expected_name:
                 return []
 
             inner_list = data.get("it", [])
-
             if isinstance(inner_list, list):
                 matchdays = []
-
                 for entry in inner_list:
                     if not isinstance(entry, dict):
                         continue
-
                     day = entry.get("day")
-                    mdp = to_number(entry.get("mdp"))
-
                     if day is None:
                         continue
-
                     matchdays.append({
                         "day": day,
-                        "points": mdp,
+                        "points": to_number(entry.get("mdp")),
                         "current": entry.get("cur"),
                         "date": entry.get("md"),
                         "tw": entry.get("tw"),
                     })
-
                 if matchdays:
                     return matchdays
 
@@ -673,79 +445,87 @@ def extract_current_season_matchdays(data, depth=0):
 
 def deduplicate_matchdays(matchdays):
     by_day = {}
-
     for entry in matchdays:
         day = entry["day"]
         points = entry["points"]
-
         if day not in by_day or (points is not None and points != 0):
             by_day[day] = entry
-
-    return sorted(
-        by_day.values(),
-        key=lambda entry: (to_number(entry["day"]) or 0),
-    )
+    return sorted(by_day.values(), key=lambda e: (to_number(e["day"]) or 0))
 
 
-def extract_transfer_entries(data, depth=0):
-    transfers = []
+def load_manager_matchdays(api, league_id, manager_id):
+    """Lädt die Spieltage eines Managers."""
+    base = f"/v4/leagues/{league_id}/managers/{manager_id}"
+    paths = [f"{base}/performance", f"{base}/dashboard", base]
 
-    if depth > 10:
-        return transfers
+    for path in paths:
+        result = try_endpoint(api, path)
+        if result["success"]:
+            found = extract_current_season_matchdays(result["data"])
+            if found:
+                return deduplicate_matchdays(found)
 
-    if isinstance(data, dict):
-        has_transfer_marker = any(
-            key in data
-            for key in [
-                "buyPrice", "sellPrice", "profit",
-                "transferType", "type", "trp",
-                "sp", "bp", "prft",
-            ]
-        )
-
-        if has_transfer_marker:
-            transfers.append(data)
-
-        for value in data.values():
-            transfers.extend(extract_transfer_entries(value, depth + 1))
-
-    elif isinstance(data, list):
-        for item in data:
-            transfers.extend(extract_transfer_entries(item, depth + 1))
-
-    return transfers
+    return []
 
 
-def search_for_mvp(data, depth=0):
-    hints = []
+def calculate_manager_bonus(matchdays):
+    """Berechnet alle Boni eines Managers aus seinen Spieltagen."""
+    total_points = 0
+    team_1000 = 0
+    team_1500 = 0
+    team_2000 = 0
+    wins = 0
 
-    if depth > 10:
-        return hints
+    for entry in matchdays:
+        points = entry["points"]
+        if points is None:
+            continue
 
-    if isinstance(data, dict):
-        for key in data.keys():
-            lower_key = str(key).lower()
-            if "mvp" in lower_key:
-                hints.append({
-                    "key": key,
-                    "value": data[key],
-                    "path": key,
-                })
+        total_points += points
 
-        for key, value in data.items():
-            nested = search_for_mvp(value, depth + 1)
-            for hint in nested:
-                hint["path"] = f"{key}.{hint['path']}"
-            hints.extend(nested)
+        if points >= 1000:
+            team_1000 += 1
+        if points >= 1500:
+            team_1500 += 1
+        if points >= 2000:
+            team_2000 += 1
 
-    elif isinstance(data, list):
-        for index, item in enumerate(data):
-            nested = search_for_mvp(item, depth + 1)
-            for hint in nested:
-                hint["path"] = f"[{index}].{hint['path']}"
-            hints.extend(nested)
+        if entry.get("tw") is True:
+            wins += 1
 
-    return hints
+    # Tägliche Anmeldung: Tage seit 10.08.2026
+    season_start = datetime(2026, 8, 10)
+    days_since = max(0, (datetime.now() - season_start).days)
+    daily_bonus = days_since * 100_000
+
+    # Punkte-Bonus: Gesamtpunkte × 1.000
+    points_bonus = total_points * 1_000
+
+    # Team-Punkte-Boni
+    bonus_1000 = team_1000 * 250_000
+    bonus_1500 = team_1500 * 1_000_000
+    bonus_2000 = team_2000 * 2_000_000
+
+    # Spieltagssieger
+    wins_bonus = wins * 1_000_000
+
+    total_bonus = daily_bonus + points_bonus + bonus_1000 + bonus_1500 + bonus_2000 + wins_bonus
+
+    return {
+        "total_points": total_points,
+        "days": days_since,
+        "daily_bonus": daily_bonus,
+        "points_bonus": points_bonus,
+        "team_1000": team_1000,
+        "bonus_1000": bonus_1000,
+        "team_1500": team_1500,
+        "bonus_1500": bonus_1500,
+        "team_2000": team_2000,
+        "bonus_2000": bonus_2000,
+        "wins": wins,
+        "wins_bonus": wins_bonus,
+        "total_bonus": total_bonus,
+    }
 
 
 # ---------------------------------------------------------
@@ -761,20 +541,14 @@ st.markdown(
 )
 
 if not st.session_state.get("logged_in"):
-    st.warning(
-        "Du bist noch nicht angemeldet. "
-        "Öffne zuerst die Hauptseite und melde dich an."
-    )
+    st.warning("Du bist noch nicht angemeldet. Öffne zuerst die Hauptseite und melde dich an.")
     st.stop()
 
 api = st.session_state.get("api")
 leagues = st.session_state.get("leagues", [])
 
 if api is None or not leagues:
-    st.error(
-        "Anmeldedaten nicht gefunden. "
-        "Bitte auf der Hauptseite neu anmelden."
-    )
+    st.error("Anmeldedaten nicht gefunden. Bitte auf der Hauptseite neu anmelden.")
     st.stop()
 
 
@@ -782,7 +556,7 @@ if api is None or not leagues:
 # Liga und Manager auswählen
 # ---------------------------------------------------------
 
-st.subheader("1. Liga und Manager auswählen")
+st.subheader("1. Liga auswählen")
 
 league_index = st.selectbox(
     "Liga auswählen",
@@ -817,274 +591,39 @@ if not managers:
     st.error("Es konnten keine Manager geladen werden.")
     st.stop()
 
-manager_lookup = {
-    get_manager_id(manager): manager
-    for manager in managers
-}
-
+manager_lookup = {get_manager_id(m): m for m in managers}
 manager_ids = list(manager_lookup.keys())
 
-selected_manager_id = st.selectbox(
-    "Manager auswählen",
-    manager_ids,
-    format_func=lambda mid: get_manager_name(manager_lookup[mid]),
-    key="dev_manager_id",
+
+# ---------------------------------------------------------
+# Bonus-Übersicht aller Manager
+# ---------------------------------------------------------
+
+st.subheader("2. Bonus-Übersicht aller Manager")
+
+st.info(
+    "Berechnet für jeden Manager: Tägliche Anmeldung, "
+    "Punkte-Bonus, Team-Punkte-Schwellen (1.000 / 1.500 / 2.000) "
+    "und Spieltagssieger. MVP und Transfers sind nicht enthalten."
 )
-
-selected_manager_name = get_manager_name(
-    manager_lookup[selected_manager_id]
-)
-
-
-# ---------------------------------------------------------
-# Bonusregeln anzeigen
-# ---------------------------------------------------------
-
-st.subheader("2. Bonusregeln")
-
-rules_rows = []
-current_category = None
-
-for rule in BONUS_RULES:
-    if rule["category"] != current_category:
-        current_category = rule["category"]
-        rules_rows.append(
-            "<tr style='background:var(--dev-header-bg);'>"
-            f"<td colspan='4'>"
-            f"<strong>{escape(current_category)}</strong>"
-            "</td></tr>"
-        )
-
-    rules_rows.append(
-        "<tr>"
-        f"<td>{escape(rule['description'])}</td>"
-        f"<td>{escape(format_bonus(rule['bonus']))}</td>"
-        f"<td style='font-size:0.75rem;color:var(--dev-muted);'>"
-        f"{escape(rule['needed_data'])}</td>"
-        f"<td style='font-size:0.75rem;color:var(--dev-muted);'>"
-        f"{escape(rule['api_hint'])}</td>"
-        "</tr>"
-    )
-
-st.markdown(
-    "<table class='dev-data-table'>"
-    "<thead><tr>"
-    "<th>Erfolg</th><th>Bonus</th>"
-    "<th>Benötigte Daten</th><th>API-Vermutung</th>"
-    "</tr></thead>"
-    f"<tbody>{''.join(rules_rows)}</tbody>"
-    "</table>",
-    unsafe_allow_html=True,
-)
-
-
-# ---------------------------------------------------------
-# API-Daten laden
-# ---------------------------------------------------------
-
-st.subheader(f"3. API-Daten für {escape(selected_manager_name)}")
-
-data_cache_key = f"dev_bonus_data_v1_{league_id}_{selected_manager_id}"
 
 if st.button(
-    f"Bonusdaten für {selected_manager_name} laden",
-    key="load_bonus_data",
+    "📊 Bonus-Übersicht laden",
+    key="load_bonus_overview",
     type="primary",
     use_container_width=True,
 ):
-    st.session_state.pop(data_cache_key, None)
+    progress = st.progress(0.0, text="Bonus-Daten werden geladen …")
 
-if data_cache_key not in st.session_state:
-    with st.spinner("Bonusrelevante API-Endpunkte werden untersucht …"):
-        results = load_manager_bonus_data(
-            api, league_id, selected_manager_id,
-        )
-    st.session_state[data_cache_key] = results
-else:
-    results = st.session_state[data_cache_key]
-
-
-# ---------------------------------------------------------
-# Spieltag-Punkte auswerten
-# ---------------------------------------------------------
-
-st.markdown("### Spieltag-Punkte (Team-Punkte-Boni)")
-
-all_matchdays = []
-
-for result in results["matchday"]:
-    found = extract_current_season_matchdays(result["data"])
-    if found:
-        all_matchdays = found
-        break
-
-unique_matchdays = deduplicate_matchdays(all_matchdays)
-
-if unique_matchdays:
-    played_matchdays = [
-        entry for entry in unique_matchdays
-        if entry["points"] is not None and entry["points"] != 0
-    ]
-
-    st.success(
-        f"{len(played_matchdays)} Spieltage der "
-        f"aktuellen Saison mit Punkten gefunden"
-    )
-
-    matchday_rows = []
-    team_1000_count = 0
-    team_1500_count = 0
-    team_2000_count = 0
-    matchday_wins = 0
-
-    for entry in unique_matchdays:
-        points = entry["points"]
-        if points is None:
-            continue
-
-        badges = []
-
-        if points >= 2000:
-            badges.append("🏆 2.000+")
-            team_2000_count += 1
-
-        if points >= 1500:
-            if "🏆 2.000+" not in badges:
-                badges.append("🥇 1.500+")
-            team_1500_count += 1
-
-        if points >= 1000:
-            if not badges:
-                badges.append("✅ 1.000+")
-            team_1000_count += 1
-
-        is_winner = entry.get("tw") is True
-        if is_winner:
-            badges.append("⭐ Spieltagssieger")
-            matchday_wins += 1
-
-        highlight = "dev-highlight-row" if badges else ""
-
-        matchday_rows.append(
-            f"<tr class='{highlight}'>"
-            f"<td>Spieltag {entry['day']}</td>"
-            f"<td>{points:.0f}</td>"
-            f"<td>{'Ja' if is_winner else '—'}</td>"
-            f"<td>{' '.join(badges)}</td>"
-            f"<td style='font-size:0.72rem;color:var(--dev-muted);'>"
-            f"{entry.get('date', '—')}</td>"
-            "</tr>"
-        )
-
-    st.markdown(
-        "<table class='dev-data-table'>"
-        "<thead><tr>"
-        "<th>Spieltag</th><th>Punkte</th><th>Sieger</th>"
-        "<th>Bonus-Schwellen</th><th>Datum</th>"
-        "</tr></thead>"
-        f"<tbody>{''.join(matchday_rows)}</tbody>"
-        "</table>",
-        unsafe_allow_html=True,
-    )
-
-    st.markdown("**Automatisch ermittelte Boni:**")
-
-    total_points = sum(
-        entry["points"]
-        for entry in unique_matchdays
-        if entry["points"] is not None
-    )
-
-    points_bonus = total_points * 1_000
-
-    auto_rows = [
-        f"- Gesamtpunkte: **{total_points:.0f}** × 1.000 → "
-        f"**{format_bonus(points_bonus)}**",
-        f"- 1.000+ Team-Punkte: **{team_1000_count}×** → "
-        f"**{format_bonus(team_1000_count * 250_000)}**",
-        f"- 1.500+ Team-Punkte: **{team_1500_count}×** → "
-        f"**{format_bonus(team_1500_count * 1_000_000)}**",
-        f"- 2.000+ Team-Punkte: **{team_2000_count}×** → "
-        f"**{format_bonus(team_2000_count * 2_000_000)}**",
-        f"- Spieltagssieger (tw=true): **{matchday_wins}×** → "
-        f"**{format_bonus(matchday_wins * 1_000_000)}**",
-    ]
-
-    total_matchday_bonus = (
-        points_bonus
-        + team_1000_count * 250_000
-        + team_1500_count * 1_000_000
-        + team_2000_count * 2_000_000
-        + matchday_wins * 1_000_000
-    )
-
-    auto_rows.append(
-        f"\n**Summe Spieltag-Boni: "
-        f"{format_bonus(total_matchday_bonus)}**"
-    )
-
-    st.markdown("\n".join(auto_rows))
-else:
-    st.warning(
-        "Keine Spieltage der aktuellen Saison gefunden. "
-        "Klicke oben auf den Lade-Button."
-    )
-
-
-# ---------------------------------------------------------
-# Spieltagssieger ermitteln
-# ---------------------------------------------------------
-
-st.markdown("### Spieltagssieger aller Manager")
-
-st.info(
-    "Die Spieltagssieger werden direkt aus dem Feld "
-    "tw=true der aktuellen Saison abgeleitet. Klicke "
-    "auf den Button, um alle Manager zu laden."
-)
-
-if st.button(
-    "Spieltagssieger aller Manager laden",
-    key="load_all_matchdays",
-    use_container_width=True,
-):
-    progress = st.progress(
-        0.0,
-        text="Spieltage aller Manager werden geladen …",
-    )
-
-    all_manager_results = {}
+    all_bonus_data = {}
 
     for index, mid in enumerate(manager_ids):
-        manager_name = get_manager_name(manager_lookup[mid])
+        name = get_manager_name(manager_lookup[mid])
+        matchdays = load_manager_matchdays(api, league_id, mid)
+        bonus = calculate_manager_bonus(matchdays)
+        bonus["name"] = name
 
-        base = f"/v4/leagues/{league_id}/managers/{mid}"
-
-        paths = [
-            f"{base}/performance",
-            f"{base}/dashboard",
-            base,
-        ]
-
-        matchdays = []
-        for path in paths:
-            result = try_endpoint(api, path)
-            if result["success"]:
-                found = extract_current_season_matchdays(result["data"])
-                if found:
-                    matchdays = found
-                    break
-
-        wins = sum(
-            1 for entry in matchdays
-            if entry.get("tw") is True
-        )
-
-        all_manager_results[mid] = {
-            "name": manager_name,
-            "matchdays": matchdays,
-            "wins": wins,
-        }
+        all_bonus_data[mid] = bonus
 
         progress.progress(
             (index + 1) / len(manager_ids),
@@ -1093,412 +632,213 @@ if st.button(
 
     progress.empty()
 
-    winner_rows = []
+    st.session_state["dev_bonus_overview"] = all_bonus_data
 
-    for mid in manager_ids:
-        info = all_manager_results[mid]
-        is_selected = (mid == selected_manager_id)
-        highlight = "dev-highlight-row" if is_selected else ""
-        bonus = format_bonus(info["wins"] * 1_000_000)
+if "dev_bonus_overview" in st.session_state:
+    all_bonus_data = st.session_state["dev_bonus_overview"]
 
-        winner_rows.append(
-            f"<tr class='{highlight}'>"
-            f"<td><strong>{escape(info['name'])}</strong></td>"
-            f"<td>{info['wins']}</td>"
-            f"<td>{escape(bonus)}</td>"
+    # Tabelle bauen
+    rows_html = []
+
+    # Nach Gesamt-Bonus sortieren (höchster zuerst)
+    sorted_managers = sorted(
+        all_bonus_data.items(),
+        key=lambda item: item[1]["total_bonus"],
+        reverse=True,
+    )
+
+    for rank, (mid, b) in enumerate(sorted_managers, start=1):
+        rows_html.append(
+            f"<tr>"
+            f"<td>{rank}</td>"
+            f"<td><strong>{escape(b['name'])}</strong></td>"
+            f"<td class='right'>{b['total_points']:,.0f}</td>"
+            f"<td class='right'>{format_compact(b['daily_bonus'])}</td>"
+            f"<td class='right'>{format_compact(b['points_bonus'])}</td>"
+            f"<td class='right'>{b['team_1000']}× → {format_compact(b['bonus_1000'])}</td>"
+            f"<td class='right'>{b['team_1500']}× → {format_compact(b['bonus_1500'])}</td>"
+            f"<td class='right'>{b['team_2000']}× → {format_compact(b['bonus_2000'])}</td>"
+            f"<td class='right'>{b['wins']}× → {format_compact(b['wins_bonus'])}</td>"
+            f"<td class='right'><strong>{format_bonus(b['total_bonus'])}</strong></td>"
+            f"</tr>"
+        )
+
+    st.markdown(
+        "<table class='dev-data-table'>"
+        "<thead><tr>"
+        "<th>#</th>"
+        "<th>Manager</th>"
+        "<th>Punkte</th>"
+        "<th>Login</th>"
+        "<th>Pkt-Bonus</th>"
+        "<th>1.000+</th>"
+        "<th>1.500+</th>"
+        "<th>2.000+</th>"
+        "<th>Sieger</th>"
+        "<th>Gesamt</th>"
+        "</tr></thead>"
+        f"<tbody>{''.join(rows_html)}</tbody>"
+        "</table>",
+        unsafe_allow_html=True,
+    )
+
+    # Legende
+    st.caption(
+        "Login = Tägliche Anmeldung (100k/Tag) · "
+        "Pkt-Bonus = Gesamtpunkte × 1.000 · "
+        "1.000+ / 1.500+ / 2.000+ = Team-Punkte-Schwellen · "
+        "Sieger = Spieltagssieger (1M/Sieg) · "
+        "Ohne MVP und Transfers"
+    )
+
+
+# ---------------------------------------------------------
+# Bonusregeln-Referenz
+# ---------------------------------------------------------
+
+with st.expander("📋 Alle 14 Bonusregeln anzeigen"):
+    rules_rows = []
+    current_category = None
+
+    for rule in BONUS_RULES:
+        if rule["category"] != current_category:
+            current_category = rule["category"]
+            rules_rows.append(
+                "<tr style='background:var(--dev-header-bg);'>"
+                f"<td colspan='3'><strong>{escape(current_category)}</strong></td>"
+                "</tr>"
+            )
+
+        rules_rows.append(
+            "<tr>"
+            f"<td>{escape(rule['description'])}</td>"
+            f"<td>{escape(format_bonus(rule['bonus']))}</td>"
+            f"<td style='font-size:0.75rem;color:var(--dev-muted);'>"
+            f"{escape(rule['needed_data'])}</td>"
             "</tr>"
         )
 
     st.markdown(
         "<table class='dev-data-table'>"
         "<thead><tr>"
-        "<th>Manager</th><th>Spieltage gewonnen</th><th>Bonus</th>"
+        "<th>Erfolg</th><th>Bonus</th><th>Benötigte Daten</th>"
         "</tr></thead>"
-        f"<tbody>{''.join(winner_rows)}</tbody>"
+        f"<tbody>{''.join(rules_rows)}</tbody>"
         "</table>",
         unsafe_allow_html=True,
     )
 
 
 # ---------------------------------------------------------
-# MVP und Aufstellungen je Spieltag
+# Diagnose: Endpunkt-Suche (Runde 2)
 # ---------------------------------------------------------
 
-st.markdown("### MVP und Aufstellungen je Spieltag")
+with st.expander("🔍 Diagnose: Endpunkt-Suche Runde 2"):
+    if st.button("🧪 Runde 2: Neue Endpunkte testen", key="btn_diagnose_runde2"):
+        import requests as req2
 
-st.info(
-    "Hier werden Endpunkte gesucht, die zeigen, "
-    "welche Spieler ein Manager an einem Spieltag "
-    "aufgestellt hatte und wer MVP war."
-)
+        token = st.session_state.get("token", "")
+        lid = league_id
+        mid = manager_ids[0] if manager_ids else ""
+        base_url = "https://api.kickbase.com"
+        diag_headers = {
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+        }
 
-if st.button(
-    "MVP- und Aufstellungsdaten suchen",
-    key="load_mvp_lineup_data",
-    use_container_width=True,
-):
-    played_days = []
+        st.write(f"**Liga:** `{lid}` | **Manager:** `{mid}`")
 
-    for result in results["matchday"]:
-        found = extract_current_season_matchdays(result["data"])
-        if found:
-            played_days = [
-                entry for entry in found
-                if entry["points"] is not None and entry["points"] != 0
-            ]
-            break
-
-    if not played_days:
-        st.warning(
-            "Keine gespielten Spieltage gefunden. "
-            "Lade zuerst oben die Bonusdaten."
-        )
-    else:
-        st.write(f"**{len(played_days)} gespielte Spieltage gefunden.**")
-
-        st.markdown("#### Aufstellung je Spieltag")
-
-        test_day = played_days[0]["day"]
-
-        st.write(
-            f"Teste Endpunkte für **Spieltag {test_day}** und "
-            f"Manager **{escape(selected_manager_name)}**:"
-        )
-
-        base = f"/v4/leagues/{league_id}/managers/{selected_manager_id}"
-        user_base = f"/v4/leagues/{league_id}/users/{selected_manager_id}"
-
-        lineup_paths = [
-            f"{base}/lineup/{test_day}",
-            f"{base}/matchday/{test_day}",
-            f"{base}/matchday/{test_day}/lineup",
-            f"{base}/matchdays/{test_day}",
-            f"{base}/matchdays/{test_day}/lineup",
-            f"{base}/squad/{test_day}",
-            f"{base}/performance/{test_day}",
-            f"{base}/points/{test_day}",
-            f"{user_base}/lineup/{test_day}",
-            f"{user_base}/matchday/{test_day}",
-            f"/v4/leagues/{league_id}/matchday/{test_day}/managers/{selected_manager_id}",
-            f"/v4/leagues/{league_id}/matchdays/{test_day}/managers/{selected_manager_id}",
-            f"/v4/leagues/{league_id}/matchday/{test_day}/users/{selected_manager_id}",
-            f"/v4/leagues/{league_id}/matchdays/{test_day}/lineup/{selected_manager_id}",
+        st.markdown("### Block A: Liga-Ebene (ohne Spieltag)")
+        endpoints_a = [
+            f"/v4/leagues/{lid}/matchdays",
+            f"/v4/leagues/{lid}/matchday",
+            f"/v4/leagues/{lid}/live",
+            f"/v4/leagues/{lid}/ranking",
+            f"/v4/leagues/{lid}/feed",
+            f"/v4/leagues/{lid}/stats",
+            f"/v4/leagues/{lid}/lineup",
+            f"/v4/leagues/{lid}/results",
         ]
+        for ep in endpoints_a:
+            try:
+                r = req2.get(f"{base_url}{ep}", headers=diag_headers, timeout=10)
+                if r.status_code == 200:
+                    data = r.json()
+                    keys = list(data.keys()) if isinstance(data, dict) else f"Liste mit {len(data)} Einträgen"
+                    st.success(f"✅ `{ep}`: **Status 200** → Keys: `{keys}`")
+                    with st.expander(f"Rohdaten: {ep}"):
+                        st.json(data)
+                else:
+                    st.error(f"❌ `{ep}`: Status {r.status_code}")
+            except Exception as e:
+                st.error(f"❌ `{ep}`: Fehler → {e}")
 
-        lineup_results = []
-
-        lineup_progress = st.progress(
-            0.0, text="Aufstellungs-Endpunkte werden getestet …",
-        )
-
-        for index, path in enumerate(lineup_paths):
-            result = try_endpoint(api, path)
-            lineup_results.append(result)
-            lineup_progress.progress(
-                (index + 1) / len(lineup_paths),
-                text=f"Aufstellungs-Endpunkte werden getestet … {index + 1} von {len(lineup_paths)}",
-            )
-
-        lineup_progress.empty()
-
-        successful_lineup = [r for r in lineup_results if r["success"]]
-        failed_lineup = [r for r in lineup_results if not r["success"]]
-
-        if successful_lineup:
-            st.success(f"{len(successful_lineup)} Aufstellungs-Endpunkte haben Daten geliefert")
-            for result in successful_lineup:
-                st.markdown(
-                    f"<div class='dev-endpoint-path'>✅ {escape(result['path'])}</div>",
-                    unsafe_allow_html=True,
-                )
-                st.json(result["data"], expanded=True)
-        else:
-            st.warning("Keiner der getesteten Aufstellungs-Endpunkte hat Daten geliefert.")
-
-        with st.expander(f"{len(failed_lineup)} fehlgeschlagene Endpunkte anzeigen"):
-            for result in failed_lineup:
-                st.markdown(
-                    f"<div class='dev-endpoint-path'>❌ {escape(result['path'])} → "
-                    f"{escape(result['error'] or '')}</div>",
-                    unsafe_allow_html=True,
-                )
-
-        # MVP-Endpunkte testen
-        st.markdown("#### MVP des Spieltags")
-
-        st.write(f"Teste Endpunkte für **Spieltag {test_day}**:")
-
-        mvp_paths = [
-            f"/v4/leagues/{league_id}/matchday/{test_day}/mvp",
-            f"/v4/leagues/{league_id}/matchdays/{test_day}/mvp",
-            f"/v4/leagues/{league_id}/matchday/{test_day}",
-            f"/v4/leagues/{league_id}/matchdays/{test_day}",
-            f"/v4/competitions/1/matchday/{test_day}",
-            f"/v4/competitions/1/matchdays/{test_day}",
-            f"/v4/competitions/1/matchday/{test_day}/mvp",
-            f"/v4/leagues/{league_id}/matchday/{test_day}/ranking",
-            f"/v4/leagues/{league_id}/matchdays/{test_day}/ranking",
-            f"/v4/leagues/{league_id}/matchday/{test_day}/results",
+        st.markdown("### Block B: Wettbewerb-Ebene (competitions)")
+        endpoints_b = [
+            "/v4/competitions/1/matchdays",
+            "/v4/competitions/1/matchday",
+            "/v4/competitions/1/table",
+            "/v4/competitions/1/ranking",
+            "/v4/competitions/1/live",
+            "/v4/competitions/1/results",
         ]
+        for ep in endpoints_b:
+            try:
+                r = req2.get(f"{base_url}{ep}", headers=diag_headers, timeout=10)
+                if r.status_code == 200:
+                    data = r.json()
+                    keys = list(data.keys()) if isinstance(data, dict) else f"Liste mit {len(data)} Einträgen"
+                    st.success(f"✅ `{ep}`: **Status 200** → Keys: `{keys}`")
+                    with st.expander(f"Rohdaten: {ep}"):
+                        st.json(data)
+                else:
+                    st.error(f"❌ `{ep}`: Status {r.status_code}")
+            except Exception as e:
+                st.error(f"❌ `{ep}`: Fehler → {e}")
 
-        mvp_results = []
+        st.markdown("### Block C: Liga + Spieltag 1 (ohne Manager)")
+        endpoints_c = [
+            f"/v4/leagues/{lid}/matchdays/1",
+            f"/v4/leagues/{lid}/matchday/1",
+            f"/v4/leagues/{lid}/live/1",
+            f"/v4/leagues/{lid}/ranking/1",
+            f"/v4/leagues/{lid}/feed/1",
+            f"/v4/leagues/{lid}/results/1",
+        ]
+        for ep in endpoints_c:
+            try:
+                r = req2.get(f"{base_url}{ep}", headers=diag_headers, timeout=10)
+                if r.status_code == 200:
+                    data = r.json()
+                    keys = list(data.keys()) if isinstance(data, dict) else f"Liste mit {len(data)} Einträgen"
+                    st.success(f"✅ `{ep}`: **Status 200** → Keys: `{keys}`")
+                    with st.expander(f"Rohdaten: {ep}"):
+                        st.json(data)
+                else:
+                    st.error(f"❌ `{ep}`: Status {r.status_code}")
+            except Exception as e:
+                st.error(f"❌ `{ep}`: Fehler → {e}")
 
-        mvp_progress = st.progress(
-            0.0, text="MVP-Endpunkte werden getestet …",
-        )
+        st.markdown("### Block D: Manager ohne Spieltag")
+        endpoints_d = [
+            f"/v4/leagues/{lid}/managers/{mid}/lineup",
+            f"/v4/leagues/{lid}/managers/{mid}/feed",
+            f"/v4/leagues/{lid}/managers/{mid}/stats",
+            f"/v4/leagues/{lid}/managers/{mid}/squad",
+            f"/v4/leagues/{lid}/managers/{mid}/performance",
+        ]
+        for ep in endpoints_d:
+            try:
+                r = req2.get(f"{base_url}{ep}", headers=diag_headers, timeout=10)
+                if r.status_code == 200:
+                    data = r.json()
+                    keys = list(data.keys()) if isinstance(data, dict) else f"Liste mit {len(data)} Einträgen"
+                    st.success(f"✅ `{ep}`: **Status 200** → Keys: `{keys}`")
+                    with st.expander(f"Rohdaten: {ep}"):
+                        st.json(data)
+                else:
+                    st.error(f"❌ `{ep}`: Status {r.status_code}")
+            except Exception as e:
+                st.error(f"❌ `{ep}`: Fehler → {e}")
 
-        for index, path in enumerate(mvp_paths):
-            result = try_endpoint(api, path)
-            mvp_results.append(result)
-            mvp_progress.progress(
-                (index + 1) / len(mvp_paths),
-                text=f"MVP-Endpunkte werden getestet … {index + 1} von {len(mvp_paths)}",
-            )
-
-        mvp_progress.empty()
-
-        successful_mvp = [r for r in mvp_results if r["success"]]
-        failed_mvp = [r for r in mvp_results if not r["success"]]
-
-        if successful_mvp:
-            st.success(f"{len(successful_mvp)} MVP-Endpunkte haben Daten geliefert")
-            for result in successful_mvp:
-                st.markdown(
-                    f"<div class='dev-endpoint-path'>✅ {escape(result['path'])}</div>",
-                    unsafe_allow_html=True,
-                )
-                mvp_hints = search_for_mvp(result["data"])
-                if mvp_hints:
-                    st.write(f"**{len(mvp_hints)} MVP-Hinweise gefunden:**")
-                    for hint in mvp_hints[:10]:
-                        st.write(f"Pfad: `{hint['path']}`")
-                        st.json(hint["value"])
-                st.json(result["data"], expanded=False)
-        else:
-            st.warning("Keiner der getesteten MVP-Endpunkte hat Daten geliefert.")
-
-        with st.expander(f"{len(failed_mvp)} fehlgeschlagene MVP-Endpunkte anzeigen"):
-            for result in failed_mvp:
-                st.markdown(
-                    f"<div class='dev-endpoint-path'>❌ {escape(result['path'])} → "
-                    f"{escape(result['error'] or '')}</div>",
-                    unsafe_allow_html=True,
-                )
-
-
-# ---------------------------------------------------------
-# Transferhistorie
-# ---------------------------------------------------------
-
-st.markdown("### Transferhistorie")
-
-all_transfers = []
-
-for result in results["transfers"]:
-    found = extract_transfer_entries(result["data"])
-    all_transfers.extend(found)
-
-if all_transfers:
-    st.success(f"{len(all_transfers)} mögliche Transfereinträge gefunden")
-
-    with st.expander(f"Alle {len(all_transfers)} Transfereinträge anzeigen"):
-        for index, transfer in enumerate(all_transfers[:50], start=1):
-            st.write(f"**Transfer {index}:**")
-            st.json(transfer)
-else:
-    st.warning("Keine Transfereinträge gefunden.")
-    st.caption("Klicke oben auf den Lade-Button, falls noch nicht geschehen.")
-
-
-# ---------------------------------------------------------
-# MVP-Suche
-# ---------------------------------------------------------
-
-st.markdown("### MVP-Daten")
-
-all_mvp_hints = []
-
-for result in results["matchday_details"]:
-    found = search_for_mvp(result["data"])
-    for hint in found:
-        hint["source"] = result["path"]
-    all_mvp_hints.extend(found)
-
-for result in results["league_feed"]:
-    found = search_for_mvp(result["data"])
-    for hint in found:
-        hint["source"] = result["path"]
-    all_mvp_hints.extend(found)
-
-if all_mvp_hints:
-    st.success(f"{len(all_mvp_hints)} MVP-Hinweise gefunden")
-
-    for hint in all_mvp_hints[:20]:
-        st.markdown(
-            f"<div class='dev-endpoint-path'>"
-            f"<strong>{escape(hint['source'])}</strong>"
-            f" → {escape(hint['path'])}</div>",
-            unsafe_allow_html=True,
-        )
-        st.json(hint["value"])
-else:
-    st.warning("Keine MVP-Felder in den untersuchten Endpunkten gefunden.")
-
-
-# ---------------------------------------------------------
-# Rohdaten aller Endpunkte
-# ---------------------------------------------------------
-
-st.markdown("### Alle geladenen Endpunkte")
-
-for group_name, group_results in results.items():
-    group_labels = {
-        "matchday": "Spieltag-Endpunkte",
-        "transfers": "Transfer-Endpunkte",
-        "matchday_details": "Spieltag-Details",
-        "league_feed": "Liga-Feed",
-    }
-
-    label = group_labels.get(group_name, group_name)
-
-    with st.expander(f"{label} ({len(group_results)} erfolgreich)"):
-        if not group_results:
-            st.info("Kein Endpunkt in dieser Gruppe hat Daten geliefert.")
-
-        for result in group_results:
-            st.markdown(
-                f"<div class='dev-endpoint-path'>"
-                f"{escape(result['path'])}</div>",
-                unsafe_allow_html=True,
-            )
-
-            st.json(result["data"], expanded=False)
-
-            st.download_button(
-                label=f"JSON herunterladen: {result['path']}",
-                data=safe_json(result["data"]),
-                file_name=f"dev_{group_name}_{abs(hash(result['path']))}.json",
-                mime="application/json",
-                key=f"dev_download_{group_name}_{abs(hash(result['path']))}",
-                use_container_width=True,
-            )
-
-
-# ---------------------------------------------------------
-# DIAGNOSE: Neue Endpunkt-Suche (Runde 2)
-# ---------------------------------------------------------
-
-st.subheader("🔍 Diagnose: Endpunkt-Suche Runde 2")
-
-if st.button("🧪 Runde 2: Neue Endpunkte testen", key="btn_diagnose_runde2"):
-    import requests as req2
-
-    token = st.session_state.get("token", "")
-    lid = st.session_state.get("league_id", league_id)
-    mid = st.session_state.get("manager_id", selected_manager_id)
-    base_url = "https://api.kickbase.com"
-    diag_headers = {
-        "Authorization": f"Bearer {token}",
-        "Content-Type": "application/json",
-    }
-
-    st.write(f"**Liga:** `{lid}` | **Manager:** `{mid}`")
-
-    # --- BLOCK A: Liga-Ebene (ohne Spieltag, ohne Manager) ---
-    st.markdown("### Block A: Liga-Ebene (ohne Spieltag)")
-    endpoints_a = [
-        f"/v4/leagues/{lid}/matchdays",
-        f"/v4/leagues/{lid}/matchday",
-        f"/v4/leagues/{lid}/live",
-        f"/v4/leagues/{lid}/ranking",
-        f"/v4/leagues/{lid}/feed",
-        f"/v4/leagues/{lid}/stats",
-        f"/v4/leagues/{lid}/lineup",
-        f"/v4/leagues/{lid}/results",
-    ]
-    for ep in endpoints_a:
-        try:
-            r = req2.get(f"{base_url}{ep}", headers=diag_headers, timeout=10)
-            if r.status_code == 200:
-                data = r.json()
-                keys = list(data.keys()) if isinstance(data, dict) else f"Liste mit {len(data)} Einträgen"
-                st.success(f"✅ `{ep}`: **Status 200** → Keys: `{keys}`")
-                with st.expander(f"Rohdaten: {ep}"):
-                    st.json(data)
-            else:
-                st.error(f"❌ `{ep}`: Status {r.status_code}")
-        except Exception as e:
-            st.error(f"❌ `{ep}`: Fehler → {e}")
-
-    # --- BLOCK B: Wettbewerb-Ebene ---
-    st.markdown("### Block B: Wettbewerb-Ebene (competitions)")
-    endpoints_b = [
-        "/v4/competitions/1/matchdays",
-        "/v4/competitions/1/matchday",
-        "/v4/competitions/1/table",
-        "/v4/competitions/1/ranking",
-        "/v4/competitions/1/live",
-        "/v4/competitions/1/results",
-    ]
-    for ep in endpoints_b:
-        try:
-            r = req2.get(f"{base_url}{ep}", headers=diag_headers, timeout=10)
-            if r.status_code == 200:
-                data = r.json()
-                keys = list(data.keys()) if isinstance(data, dict) else f"Liste mit {len(data)} Einträgen"
-                st.success(f"✅ `{ep}`: **Status 200** → Keys: `{keys}`")
-                with st.expander(f"Rohdaten: {ep}"):
-                    st.json(data)
-            else:
-                st.error(f"❌ `{ep}`: Status {r.status_code}")
-        except Exception as e:
-            st.error(f"❌ `{ep}`: Fehler → {e}")
-
-    # --- BLOCK C: Liga + Spieltag (ohne Manager) ---
-    st.markdown("### Block C: Liga + Spieltag 1 (ohne Manager)")
-    endpoints_c = [
-        f"/v4/leagues/{lid}/matchdays/1",
-        f"/v4/leagues/{lid}/matchday/1",
-        f"/v4/leagues/{lid}/live/1",
-        f"/v4/leagues/{lid}/ranking/1",
-        f"/v4/leagues/{lid}/feed/1",
-        f"/v4/leagues/{lid}/results/1",
-    ]
-    for ep in endpoints_c:
-        try:
-            r = req2.get(f"{base_url}{ep}", headers=diag_headers, timeout=10)
-            if r.status_code == 200:
-                data = r.json()
-                keys = list(data.keys()) if isinstance(data, dict) else f"Liste mit {len(data)} Einträgen"
-                st.success(f"✅ `{ep}`: **Status 200** → Keys: `{keys}`")
-                with st.expander(f"Rohdaten: {ep}"):
-                    st.json(data)
-            else:
-                st.error(f"❌ `{ep}`: Status {r.status_code}")
-        except Exception as e:
-            st.error(f"❌ `{ep}`: Fehler → {e}")
-
-    # --- BLOCK D: Manager ohne Spieltag ---
-    st.markdown("### Block D: Manager-Endpunkte ohne Spieltag")
-    endpoints_d = [
-        f"/v4/leagues/{lid}/managers/{mid}/lineup",
-        f"/v4/leagues/{lid}/managers/{mid}/feed",
-        f"/v4/leagues/{lid}/managers/{mid}/stats",
-        f"/v4/leagues/{lid}/managers/{mid}/squad",
-        f"/v4/leagues/{lid}/managers/{mid}/performance",
-    ]
-    for ep in endpoints_d:
-        try:
-            r = req2.get(f"{base_url}{ep}", headers=diag_headers, timeout=10)
-            if r.status_code == 200:
-                data = r.json()
-                keys = list(data.keys()) if isinstance(data, dict) else f"Liste mit {len(data)} Einträgen"
-                st.success(f"✅ `{ep}`: **Status 200** → Keys: `{keys}`")
-                with st.expander(f"Rohdaten: {ep}"):
-                    st.json(data)
-            else:
-                st.error(f"❌ `{ep}`: Status {r.status_code}")
-        except Exception as e:
-            st.error(f"❌ `{ep}`: Fehler → {e}")
-
-    st.info("💡 Schick mir einen Screenshot der Ergebnisse – besonders von den grünen ✅ Treffern!")
+        st.info("💡 Schick mir einen Screenshot der Ergebnisse – besonders von den grünen ✅ Treffern!")
