@@ -2302,6 +2302,17 @@ def compute_own_bonus(
         + (realized or 0.0)
     )
 
+manager_calculated_bonus = calculate_manager_bonus(
+    api,
+    league_id,
+    selected_manager_id,
+)
+
+if viewing_self and bonus_info:
+    manager_bonus = bonus_info["bonus"]
+else:
+    manager_bonus = manager_calculated_bonus
+    
     calculated = (
         BASE_BUDGET
         + total_profit
@@ -4239,7 +4250,7 @@ if realized_profit is not None:
 budget = compute_budget(
     stats,
     total_profit,
-    bonus,
+    manager_bonus + bonus_extra,
     days_to_matchday,
     real_balance=(
         own_budget
@@ -4387,6 +4398,79 @@ with st.expander(
         compact,
     )
 
+    kpi_block(
+        (
+            "Bonus"
+            if viewing_self
+            else "Bonus geschätzt"
+        ),
+        [
+            (
+                "Bonus gesamt",
+                format_signed_currency(
+                    manager_bonus
+                ),
+                [
+                    (
+                        "Echte Differenz aus Budget"
+                        if viewing_self
+                        else (
+                            "Geschätzt: Pauschale + Login "
+                            "+ Punkte + Schwellen + Siege"
+                        )
+                    ),
+                ],
+                tone_of(manager_bonus),
+            ),
+            (
+                "Berechnet",
+                format_signed_currency(
+                    manager_calculated_bonus
+                ),
+                [
+                    "2,5M + Login + Punkte×1k",
+                    (
+                        "Team-Schwellen + "
+                        "Spieltagssieger"
+                    ),
+                ],
+                tone_of(
+                    manager_calculated_bonus
+                ),
+            ),
+            (
+                "Nicht erfasst",
+                (
+                    format_signed_currency(
+                        manager_bonus
+                        - manager_calculated_bonus
+                    )
+                    if viewing_self
+                    else "—"
+                ),
+                [
+                    (
+                        "MVP, Transfers und "
+                        "sonstige Boni"
+                        if viewing_self
+                        else "Nur beim eigenen "
+                        "Manager sichtbar"
+                    ),
+                ],
+                (
+                    tone_of(
+                        manager_bonus
+                        - manager_calculated_bonus
+                    )
+                    if viewing_self
+                    else "neutral"
+                ),
+            ),
+        ],
+        compact,
+    )
+
+    
     kpi_block(
         "Gewinn",
         [
