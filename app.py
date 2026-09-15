@@ -3881,11 +3881,14 @@ if view == "Liga":
 
         st.session_state[cache_key] = rows
 
-    if bonus_info and own_budget is not None:
-        league_frame.loc[
-            league_frame["Ich"],
-            "Bonus",
-        ] = bonus_info["bonus"]
+    try:
+        if bonus_info and own_budget is not None:
+            league_frame.loc[
+                league_frame["Ich"],
+                "Bonus",
+            ] = bonus_info["bonus"]
+    except Exception:
+        pass
     
     league_frame = pd.DataFrame(
         st.session_state[cache_key]
