@@ -1,13 +1,21 @@
 """
 Development-Bereich für das Kickbase-Dashboard.
 
-Zeigt eine Bonus-Tabelle, in der für jeden Manager
-die erreichten Erfolge eingetragen werden können.
-Der Gesamtbonus wird automatisch berechnet.
+Untersucht die Kickbase-API, um für jeden Manager
+automatisch die Bonuskriterien ableiten zu können.
+
+Untersuchte Bereiche:
+- Spieltagsergebnisse je Manager (Punkte pro Spieltag)
+- Einzelspieler-Punkte je Spieltag
+- MVP-Daten
+- Transferhistorie
 """
 
+import json
+from datetime import datetime, timezone
 from html import escape
 
+import pandas as pd
 import streamlit as st
 
 
@@ -24,7 +32,7 @@ st.set_page_config(
 
 
 # ---------------------------------------------------------
-# Bonusregeln
+# Bonusregeln als Referenz
 # ---------------------------------------------------------
 
 BONUS_RULES = [
@@ -33,143 +41,244 @@ BONUS_RULES = [
         "category": "Allgemein",
         "description": "Tägliche Anmeldung",
         "bonus": 100_000,
-        "note": "Ab dem 10.08.2026 täglich für jeden",
-        "input_type": "number",
-        "input_label": "Tage angemeldet",
+        "needed_data": "Anzahl Tage seit 10.08.2026",
+        "api_hint": "Unklar, ob die API das liefert",
     },
     {
         "id": "mvp",
         "category": "Spieltag",
         "description": "MVP des Spieltags",
         "bonus": 1_000_000,
-        "note": (
-            "Welcher Spieler war MVP und "
-            "bei wem war er aufgestellt?"
+        "needed_data": (
+            "Welcher Spieler war MVP an welchem "
+            "Spieltag und bei welchem Manager "
+            "war er aufgestellt?"
         ),
-        "input_type": "number",
-        "input_label": "Anzahl MVP-Spieltage",
+        "api_hint": (
+            "Möglicherweise in matchday- oder "
+            "competition-Endpunkten"
+        ),
     },
     {
         "id": "matchday_winner",
         "category": "Spieltag",
         "description": "Spieltagssieger",
         "bonus": 1_000_000,
-        "note": "Beim Manager selbst nachschauen",
-        "input_type": "number",
-        "input_label": "Anzahl gewonnene Spieltage",
+        "needed_data": (
+            "Welcher Manager hatte die meisten "
+            "Punkte an welchem Spieltag?"
+        ),
+        "api_hint": (
+            "Manager-Saisondaten mit Spieltag-"
+            "Einzelergebnissen (mdp-Feld)"
+        ),
     },
     {
         "id": "player_200",
         "category": "Spieler-Punkte",
-        "description": "200 Punkte für einen Spieler",
+        "description": "200+ Punkte für einen Spieler",
         "bonus": 100_000,
-        "note": "Einmalig pro Spieltag, wenn erfüllt",
-        "input_type": "number",
-        "input_label": "Wie oft erreicht?",
+        "needed_data": (
+            "Punkte je Spieler je Spieltag, "
+            "aufgestellt bei welchem Manager"
+        ),
+        "api_hint": (
+            "Möglicherweise in matchday-Detail- "
+            "oder Lineup-Endpunkten"
+        ),
     },
     {
         "id": "player_300",
         "category": "Spieler-Punkte",
-        "description": "300 Punkte für einen Spieler",
+        "description": "300+ Punkte für einen Spieler",
         "bonus": 500_000,
-        "note": "Einmalig pro Spieltag, wenn erfüllt",
-        "input_type": "number",
-        "input_label": "Wie oft erreicht?",
+        "needed_data": "Wie oben",
+        "api_hint": "Wie oben",
     },
     {
         "id": "player_400",
         "category": "Spieler-Punkte",
-        "description": "400 Punkte für einen Spieler",
+        "description": "400+ Punkte für einen Spieler",
         "bonus": 1_000_000,
-        "note": "Einmalig pro Spieltag, wenn erfüllt",
-        "input_type": "number",
-        "input_label": "Wie oft erreicht?",
+        "needed_data": "Wie oben",
+        "api_hint": "Wie oben",
     },
     {
         "id": "player_500",
         "category": "Spieler-Punkte",
-        "description": "500 Punkte für einen Spieler",
+        "description": "500+ Punkte für einen Spieler",
         "bonus": 2_000_000,
-        "note": "Einmalig pro Spieltag, wenn erfüllt",
-        "input_type": "number",
-        "input_label": "Wie oft erreicht?",
+        "needed_data": "Wie oben",
+        "api_hint": "Wie oben",
     },
     {
         "id": "team_1000",
         "category": "Team-Punkte",
-        "description": "1.000 Punkte ganzes Team",
+        "description": "1.000+ Punkte ganzes Team",
         "bonus": 250_000,
-        "note": "Einmalig pro Spieltag, wenn erfüllt",
-        "input_type": "number",
-        "input_label": "Wie oft erreicht?",
+        "needed_data": (
+            "Gesamtpunkte des Managers je Spieltag"
+        ),
+        "api_hint": (
+            "mdp-Feld in den Spieltag-Einträgen "
+            "der Manager-Saisondaten"
+        ),
     },
     {
         "id": "team_1500",
         "category": "Team-Punkte",
-        "description": "1.500 Punkte ganzes Team",
+        "description": "1.500+ Punkte ganzes Team",
         "bonus": 1_000_000,
-        "note": "Einmalig pro Spieltag, wenn erfüllt",
-        "input_type": "number",
-        "input_label": "Wie oft erreicht?",
+        "needed_data": "Wie oben",
+        "api_hint": "Wie oben",
     },
     {
         "id": "team_2000",
         "category": "Team-Punkte",
-        "description": "2.000 Punkte ganzes Team",
+        "description": "2.000+ Punkte ganzes Team",
         "bonus": 2_000_000,
-        "note": "Einmalig pro Spieltag, wenn erfüllt",
-        "input_type": "number",
-        "input_label": "Wie oft erreicht?",
+        "needed_data": "Wie oben",
+        "api_hint": "Wie oben",
     },
     {
         "id": "transfer_3m",
         "category": "Transfergewinn",
-        "description": "3 Mio. Transfergewinn mit einem Spieler",
+        "description": "3 Mio. Transfergewinn",
         "bonus": 250_000,
-        "note": (
-            "Spieler muss gekauft worden sein, "
-            "nicht zugelost. Verkauf nur an den Markt."
+        "needed_data": (
+            "Transferhistorie: Kauf- und "
+            "Verkaufspreis je Spieler"
         ),
-        "input_type": "number",
-        "input_label": "Wie oft erreicht?",
+        "api_hint": (
+            "Manager-Transfer- oder "
+            "Activities-Endpunkte"
+        ),
     },
     {
         "id": "transfer_5m",
         "category": "Transfergewinn",
-        "description": "5 Mio. Transfergewinn mit einem Spieler",
+        "description": "5 Mio. Transfergewinn",
         "bonus": 500_000,
-        "note": (
-            "Spieler muss gekauft worden sein, "
-            "nicht zugelost. Verkauf nur an den Markt."
-        ),
-        "input_type": "number",
-        "input_label": "Wie oft erreicht?",
+        "needed_data": "Wie oben",
+        "api_hint": "Wie oben",
     },
     {
         "id": "transfer_10m",
         "category": "Transfergewinn",
-        "description": "10 Mio. Transfergewinn mit einem Spieler",
+        "description": "10 Mio. Transfergewinn",
         "bonus": 1_000_000,
-        "note": (
-            "Spieler muss gekauft worden sein, "
-            "nicht zugelost. Verkauf nur an den Markt."
-        ),
-        "input_type": "number",
-        "input_label": "Wie oft erreicht?",
+        "needed_data": "Wie oben",
+        "api_hint": "Wie oben",
     },
     {
         "id": "transfer_25m",
         "category": "Transfergewinn",
-        "description": "25 Mio. Transfergewinn mit einem Spieler",
+        "description": "25 Mio. Transfergewinn",
         "bonus": 2_000_000,
-        "note": (
-            "Spieler muss gekauft worden sein, "
-            "nicht zugelost. Verkauf nur an den Markt."
-        ),
-        "input_type": "number",
-        "input_label": "Wie oft erreicht?",
+        "needed_data": "Wie oben",
+        "api_hint": "Wie oben",
     },
 ]
+
+
+# ---------------------------------------------------------
+# CSS
+# ---------------------------------------------------------
+
+DEV_STYLE = """
+<style>
+:root {
+    --dev-text: #1c1c1c;
+    --dev-muted: #686e74;
+    --dev-border: #e0e3e6;
+    --dev-background: #ffffff;
+    --dev-header-bg: #f2f4f7;
+    --dev-header-text: #30363d;
+    --dev-success: #08783a;
+    --dev-warning: #b35c00;
+    --dev-error: #c62828;
+    --dev-code-bg: #f6f7f8;
+    --dev-highlight: #eaf6ef;
+}
+
+.dev-status-found {
+    color: var(--dev-success);
+    font-weight: 700;
+}
+
+.dev-status-missing {
+    color: var(--dev-error);
+    font-weight: 700;
+}
+
+.dev-status-partial {
+    color: var(--dev-warning);
+    font-weight: 700;
+}
+
+.dev-endpoint-path {
+    padding: 0.5rem 0.7rem;
+    margin: 0.3rem 0;
+    border: 1px solid var(--dev-border);
+    border-radius: 6px;
+    background: var(--dev-code-bg);
+    font-family: monospace;
+    font-size: 0.78rem;
+    overflow-wrap: anywhere;
+}
+
+.dev-data-table {
+    width: 100%;
+    border-collapse: collapse;
+    color: var(--dev-text);
+    background: var(--dev-background);
+    font-size: 0.8rem;
+    margin: 0.5rem 0;
+}
+
+.dev-data-table th {
+    padding: 0.55rem;
+    border: 1px solid var(--dev-border);
+    background: var(--dev-header-bg);
+    color: var(--dev-header-text);
+    font-size: 0.7rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    text-align: left;
+}
+
+.dev-data-table td {
+    padding: 0.5rem 0.55rem;
+    border: 1px solid var(--dev-border);
+    vertical-align: top;
+}
+
+.dev-highlight-row td {
+    background: var(--dev-highlight);
+}
+
+html[data-theme="dark"],
+body[data-theme="dark"],
+[data-theme="dark"] {
+    --dev-text: #ffffff;
+    --dev-muted: #c5cad0;
+    --dev-border: #464c54;
+    --dev-background: #171b20;
+    --dev-header-bg: #3b434d;
+    --dev-header-text: #ffffff;
+    --dev-success: #52d889;
+    --dev-warning: #f0a830;
+    --dev-error: #ff7474;
+    --dev-code-bg: #22272e;
+    --dev-highlight: #1e3028;
+}
+</style>
+"""
+
+st.markdown(
+    DEV_STYLE,
+    unsafe_allow_html=True,
+)
 
 
 # ---------------------------------------------------------
@@ -177,7 +286,6 @@ BONUS_RULES = [
 # ---------------------------------------------------------
 
 def first_value(data, keys, default=None):
-    """Gibt den ersten vorhandenen Wert zurück."""
     if not isinstance(data, dict):
         return default
 
@@ -188,8 +296,40 @@ def first_value(data, keys, default=None):
     return default
 
 
+def to_number(value):
+    if value is None or value == "":
+        return None
+
+    if isinstance(value, bool):
+        return None
+
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def get_league_id(league):
+    value = first_value(
+        league,
+        ["id", "i", "leagueId", "li"],
+        "",
+    )
+
+    return str(value) if value else ""
+
+
+def get_league_name(league):
+    return str(
+        first_value(
+            league,
+            ["name", "n", "leagueName", "ln"],
+            "Unbekannte Liga",
+        )
+    )
+
+
 def get_manager_id(manager):
-    """Ermittelt die Manager-ID."""
     value = first_value(
         manager,
         [
@@ -203,11 +343,10 @@ def get_manager_id(manager):
         "",
     )
 
-    return str(value) if value is not None else ""
+    return str(value) if value else ""
 
 
 def get_manager_name(manager):
-    """Ermittelt den Managernamen."""
     return str(
         first_value(
             manager,
@@ -225,30 +364,7 @@ def get_manager_name(manager):
     )
 
 
-def get_league_id(league):
-    """Ermittelt die Liga-ID."""
-    value = first_value(
-        league,
-        ["id", "i", "leagueId", "li"],
-        "",
-    )
-
-    return str(value) if value is not None else ""
-
-
-def get_league_name(league):
-    """Ermittelt den Liganamen."""
-    return str(
-        first_value(
-            league,
-            ["name", "n", "leagueName", "ln"],
-            "Unbekannte Liga",
-        )
-    )
-
-
 def looks_like_manager(item):
-    """Prüft, ob ein Dictionary ein Manager ist."""
     if not isinstance(item, dict):
         return False
 
@@ -276,7 +392,6 @@ def looks_like_manager(item):
 
 
 def find_manager_list(value, depth=0):
-    """Sucht nach einer Managerliste."""
     if depth > 8:
         return []
 
@@ -308,18 +423,16 @@ def find_manager_list(value, depth=0):
             "items",
             "it",
         ]:
-            if key not in value:
-                continue
+            if key in value:
+                result = find_manager_list(
+                    value[key],
+                    depth + 1,
+                )
 
-            result = find_manager_list(
-                value[key],
-                depth + 1,
-            )
+                if result:
+                    return result
 
-            if result:
-                return result
-
-        for key, nested_value in value.items():
+        for key, nested in value.items():
             if key in {
                 "tkn",
                 "token",
@@ -328,7 +441,7 @@ def find_manager_list(value, depth=0):
                 continue
 
             result = find_manager_list(
-                nested_value,
+                nested,
                 depth + 1,
             )
 
@@ -338,8 +451,48 @@ def find_manager_list(value, depth=0):
     return []
 
 
+def collect_dictionaries(data, depth=0):
+    found = []
+
+    if depth > 10:
+        return found
+
+    if isinstance(data, dict):
+        found.append(data)
+
+        for value in data.values():
+            found.extend(
+                collect_dictionaries(
+                    value,
+                    depth + 1,
+                )
+            )
+
+    elif isinstance(data, list):
+        for item in data:
+            found.extend(
+                collect_dictionaries(
+                    item,
+                    depth + 1,
+                )
+            )
+
+    return found
+
+
+def safe_json(value):
+    try:
+        return json.dumps(
+            value,
+            ensure_ascii=False,
+            indent=2,
+            default=str,
+        )
+    except Exception:
+        return str(value)
+
+
 def format_bonus(value):
-    """Formatiert einen Bonusbetrag."""
     if value >= 1_000_000:
         amount = value / 1_000_000
         text = f"{amount:,.2f}"
@@ -357,118 +510,277 @@ def format_bonus(value):
 
 
 # ---------------------------------------------------------
-# CSS
+# API-Endpunkte laden
 # ---------------------------------------------------------
 
-DEV_STYLE = """
-<style>
-:root {
-    --dev-text: #1c1c1c;
-    --dev-muted: #686e74;
-    --dev-border: #e0e3e6;
-    --dev-background: #ffffff;
-    --dev-header-bg: #f2f4f7;
-    --dev-header-text: #30363d;
-    --dev-category-bg: #eef1f5;
-    --dev-positive: #0b8f43;
-    --dev-highlight: #fff8e6;
-}
+def try_endpoint(api, path):
+    """Ruft einen Endpunkt auf und gibt Ergebnis zurück."""
+    try:
+        data = api.get(path)
 
-.dev-info {
-    padding: 0.8rem 1rem;
-    margin: 0.5rem 0 1rem;
-    border: 1px solid var(--dev-border);
-    border-radius: 8px;
-    background: var(--dev-background);
-    color: var(--dev-text);
-    font-size: 0.85rem;
-}
+        return {
+            "path": path,
+            "success": True,
+            "data": data,
+            "error": None,
+        }
 
-.dev-summary {
-    margin: 1rem 0;
-    padding: 1rem;
-    border: 2px solid var(--dev-positive);
-    border-radius: 10px;
-    background: var(--dev-highlight);
-}
+    except Exception as error:
+        return {
+            "path": path,
+            "success": False,
+            "data": None,
+            "error": str(error),
+        }
 
-.dev-summary-title {
-    color: var(--dev-text);
-    font-weight: 750;
-    font-size: 1rem;
-    margin-bottom: 0.5rem;
-}
 
-.dev-summary-amount {
-    color: var(--dev-positive);
-    font-weight: 800;
-    font-size: 1.6rem;
-}
+def load_manager_bonus_data(
+    api,
+    league_id,
+    manager_id,
+):
+    """Lädt alle bonusrelevanten Endpunkte eines Managers."""
+    base = (
+        f"/v4/leagues/{league_id}"
+        f"/managers/{manager_id}"
+    )
 
-.dev-rules-table {
-    width: 100%;
-    border-collapse: collapse;
-    color: var(--dev-text);
-    background: var(--dev-background);
-    font-size: 0.82rem;
-    margin: 0.5rem 0;
-}
+    user_base = (
+        f"/v4/leagues/{league_id}"
+        f"/users/{manager_id}"
+    )
 
-.dev-rules-table th {
-    padding: 0.6rem 0.55rem;
-    border: 1px solid var(--dev-border);
-    background: var(--dev-header-bg);
-    color: var(--dev-header-text);
-    font-size: 0.7rem;
-    font-weight: 700;
-    text-transform: uppercase;
-    text-align: left;
-    white-space: nowrap;
-}
+    # Gruppe 1: Spieltagsergebnisse
+    matchday_paths = [
+        f"{base}/performance",
+        f"{base}/dashboard",
+        f"{base}/points",
+        f"{base}/history",
+        base,
+        f"{user_base}/stats",
+        f"{user_base}/profile",
+    ]
 
-.dev-rules-table td {
-    padding: 0.5rem 0.55rem;
-    border: 1px solid var(--dev-border);
-    vertical-align: middle;
-}
+    # Gruppe 2: Transfers
+    transfer_paths = [
+        f"{base}/transfers",
+        f"{base}/activities",
+        f"{base}/activitiesFeed",
+        f"{base}/feed",
+    ]
 
-.dev-category-row td {
-    background: var(--dev-category-bg);
-    font-weight: 700;
-    font-size: 0.78rem;
-    color: var(--dev-header-text);
-}
+    # Gruppe 3: Spieltag-Details
+    matchday_detail_paths = [
+        f"/v4/leagues/{league_id}/matchdays",
+        f"/v4/leagues/{league_id}/matchday",
+        f"/v4/competitions/1/matchdays",
+        f"/v4/competitions/1/matchday",
+    ]
 
-.dev-note {
-    color: var(--dev-muted);
-    font-size: 0.75rem;
-}
+    # Gruppe 4: Liga-Feed für MVP
+    league_feed_paths = [
+        f"/v4/leagues/{league_id}/activitiesFeed",
+        f"/v4/leagues/{league_id}/activities",
+        f"/v4/leagues/{league_id}/feed",
+    ]
 
-.dev-subtotal {
-    font-weight: 750;
-    color: var(--dev-positive);
-}
+    results = {
+        "matchday": [],
+        "transfers": [],
+        "matchday_details": [],
+        "league_feed": [],
+    }
 
-html[data-theme="dark"],
-body[data-theme="dark"],
-[data-theme="dark"] {
-    --dev-text: #ffffff;
-    --dev-muted: #c5cad0;
-    --dev-border: #464c54;
-    --dev-background: #171b20;
-    --dev-header-bg: #3b434d;
-    --dev-header-text: #ffffff;
-    --dev-category-bg: #2a3038;
-    --dev-positive: #52d889;
-    --dev-highlight: #2a3520;
-}
-</style>
-"""
+    for path in matchday_paths:
+        result = try_endpoint(api, path)
 
-st.markdown(
-    DEV_STYLE,
-    unsafe_allow_html=True,
-)
+        if result["success"]:
+            results["matchday"].append(result)
+
+    for path in transfer_paths:
+        result = try_endpoint(api, path)
+
+        if result["success"]:
+            results["transfers"].append(result)
+
+    for path in matchday_detail_paths:
+        result = try_endpoint(api, path)
+
+        if result["success"]:
+            results["matchday_details"].append(
+                result
+            )
+
+    for path in league_feed_paths:
+        result = try_endpoint(api, path)
+
+        if result["success"]:
+            results["league_feed"].append(result)
+
+    return results
+
+
+# ---------------------------------------------------------
+# Spieltagsdaten auswerten
+# ---------------------------------------------------------
+
+def extract_matchday_points(data, depth=0):
+    """Sucht Spieltag-für-Spieltag-Punkte in den Daten."""
+    matchdays = []
+
+    if depth > 10:
+        return matchdays
+
+    if isinstance(data, dict):
+        day = data.get("day")
+        mdp = to_number(data.get("mdp"))
+
+        if day is not None and mdp is not None:
+            matchdays.append(
+                {
+                    "day": day,
+                    "points": mdp,
+                    "current": data.get("cur"),
+                    "date": data.get("md"),
+                }
+            )
+
+        for value in data.values():
+            matchdays.extend(
+                extract_matchday_points(
+                    value,
+                    depth + 1,
+                )
+            )
+
+    elif isinstance(data, list):
+        for item in data:
+            matchdays.extend(
+                extract_matchday_points(
+                    item,
+                    depth + 1,
+                )
+            )
+
+    return matchdays
+
+
+def deduplicate_matchdays(matchdays):
+    """Entfernt doppelte Spieltage."""
+    by_day = {}
+
+    for entry in matchdays:
+        day = entry["day"]
+        points = entry["points"]
+
+        if day not in by_day or (
+            points is not None
+            and points != 0
+        ):
+            by_day[day] = entry
+
+    return sorted(
+        by_day.values(),
+        key=lambda entry: (
+            to_number(entry["day"]) or 0
+        ),
+    )
+
+
+def extract_transfer_entries(data, depth=0):
+    """Sucht Transfereinträge in den Daten."""
+    transfers = []
+
+    if depth > 10:
+        return transfers
+
+    if isinstance(data, dict):
+        has_transfer_marker = any(
+            key in data
+            for key in [
+                "buyPrice",
+                "sellPrice",
+                "profit",
+                "transferType",
+                "type",
+                "trp",
+                "sp",
+                "bp",
+                "prft",
+            ]
+        )
+
+        if has_transfer_marker:
+            transfers.append(data)
+
+        for value in data.values():
+            transfers.extend(
+                extract_transfer_entries(
+                    value,
+                    depth + 1,
+                )
+            )
+
+    elif isinstance(data, list):
+        for item in data:
+            transfers.extend(
+                extract_transfer_entries(
+                    item,
+                    depth + 1,
+                )
+            )
+
+    return transfers
+
+
+def search_for_mvp(data, depth=0):
+    """Sucht nach MVP-Hinweisen in den Daten."""
+    hints = []
+
+    if depth > 10:
+        return hints
+
+    if isinstance(data, dict):
+        for key in data.keys():
+            lower_key = str(key).lower()
+
+            if "mvp" in lower_key:
+                hints.append(
+                    {
+                        "key": key,
+                        "value": data[key],
+                        "path": key,
+                    }
+                )
+
+        for key, value in data.items():
+            nested = search_for_mvp(
+                value,
+                depth + 1,
+            )
+
+            for hint in nested:
+                hint["path"] = (
+                    f"{key}.{hint['path']}"
+                )
+
+            hints.extend(nested)
+
+    elif isinstance(data, list):
+        for index, item in enumerate(data):
+            nested = search_for_mvp(
+                item,
+                depth + 1,
+            )
+
+            for hint in nested:
+                hint["path"] = (
+                    f"[{index}].{hint['path']}"
+                )
+
+            hints.extend(nested)
+
+    return hints
 
 
 # ---------------------------------------------------------
@@ -477,11 +789,16 @@ st.markdown(
 
 st.title("🛠️ Development")
 
+st.markdown(
+    "Diese Seite untersucht die Kickbase-API, um "
+    "herauszufinden, welche Bonuskriterien automatisch "
+    "abgeleitet werden können."
+)
+
 if not st.session_state.get("logged_in"):
     st.warning(
         "Du bist noch nicht angemeldet. "
-        "Öffne zuerst die Hauptseite des Dashboards "
-        "und melde dich dort an."
+        "Öffne zuerst die Hauptseite und melde dich an."
     )
 
     st.stop()
@@ -499,8 +816,10 @@ if api is None or not leagues:
 
 
 # ---------------------------------------------------------
-# Liga und Manager laden
+# Liga und Manager auswählen
 # ---------------------------------------------------------
+
+st.subheader("1. Liga und Manager auswählen")
 
 league_index = st.selectbox(
     "Liga auswählen",
@@ -553,25 +872,6 @@ if not managers:
 
     st.stop()
 
-
-# ---------------------------------------------------------
-# Manager auswählen
-# ---------------------------------------------------------
-
-st.subheader("Bonus-Berechnung")
-
-st.markdown(
-    """
-    <div class="dev-info">
-        Trage für den ausgewählten Manager ein, wie oft
-        jeder Erfolg erreicht wurde. Der Gesamtbonus wird
-        automatisch berechnet. Die Werte werden während
-        der Sitzung gespeichert.
-    </div>
-    """,
-    unsafe_allow_html=True,
-)
-
 manager_lookup = {
     get_manager_id(manager): manager
     for manager in managers
@@ -594,275 +894,530 @@ selected_manager_name = get_manager_name(
     manager_lookup[selected_manager_id]
 )
 
-st.markdown(
-    f"#### Erfolge von {escape(selected_manager_name)}"
-)
-
-
-# ---------------------------------------------------------
-# Eingabefelder und Berechnung
-# ---------------------------------------------------------
-
-bonus_state_key = (
-    f"dev_bonus_{league_id}_"
-    f"{selected_manager_id}"
-)
-
-if bonus_state_key not in st.session_state:
-    st.session_state[bonus_state_key] = {
-        rule["id"]: 0
-        for rule in BONUS_RULES
-    }
-
-current_values = st.session_state[
-    bonus_state_key
-]
-
-current_category = None
-total_bonus = 0
-
-for rule in BONUS_RULES:
-    if rule["category"] != current_category:
-        current_category = rule["category"]
-
-        st.markdown(
-            f"##### {escape(current_category)}"
-        )
-
-    columns = st.columns([4, 2, 2])
-
-    with columns[0]:
-        st.markdown(
-            f"**{escape(rule['description'])}**"
-        )
-
-        st.caption(rule["note"])
-
-    with columns[1]:
-        st.caption(
-            f"Bonus je Erfolg: "
-            f"{format_bonus(rule['bonus'])}"
-        )
-
-    with columns[2]:
-        new_value = st.number_input(
-            rule["input_label"],
-            min_value=0,
-            max_value=999,
-            step=1,
-            value=current_values.get(
-                rule["id"],
-                0,
-            ),
-            key=(
-                f"dev_input_{league_id}_"
-                f"{selected_manager_id}_"
-                f"{rule['id']}"
-            ),
-        )
-
-        current_values[rule["id"]] = new_value
-
-    rule_bonus = new_value * rule["bonus"]
-    total_bonus += rule_bonus
-
-st.session_state[bonus_state_key] = (
-    current_values
-)
-
-
-# ---------------------------------------------------------
-# Zusammenfassung
-# ---------------------------------------------------------
-
-st.markdown(
-    "<div class='dev-summary'>"
-    "<div class='dev-summary-title'>"
-    f"Gesamtbonus für "
-    f"{escape(selected_manager_name)}"
-    "</div>"
-    "<div class='dev-summary-amount'>"
-    f"{format_bonus(total_bonus)}"
-    "</div>"
-    "</div>",
-    unsafe_allow_html=True,
-)
-
-
-# ---------------------------------------------------------
-# Detailübersicht als Tabelle
-# ---------------------------------------------------------
-
-with st.expander(
-    "Detailübersicht aller Erfolge",
-    expanded=False,
-):
-    current_category = None
-    table_rows = []
-
-    for rule in BONUS_RULES:
-        if rule["category"] != current_category:
-            current_category = rule["category"]
-
-            table_rows.append(
-                "<tr class='dev-category-row'>"
-                f"<td colspan='4'>"
-                f"{escape(current_category)}"
-                "</td>"
-                "</tr>"
-            )
-
-        count = current_values.get(
-            rule["id"],
-            0,
-        )
-
-        rule_total = count * rule["bonus"]
-
-        total_class = (
-            "dev-subtotal"
-            if rule_total > 0
-            else ""
-        )
-
-        table_rows.append(
-            "<tr>"
-            f"<td>"
-            f"{escape(rule['description'])}"
-            "<br />"
-            f"<span class='dev-note'>"
-            f"{escape(rule['note'])}"
-            "</span>"
-            "</td>"
-            f"<td>{escape(format_bonus(rule['bonus']))}</td>"
-            f"<td>{count}</td>"
-            f"<td class='{total_class}'>"
-            f"{escape(format_bonus(rule_total))}"
-            "</td>"
-            "</tr>"
-        )
-
-    st.markdown(
-        "<table class='dev-rules-table'>"
-        "<thead><tr>"
-        "<th>Erfolg</th>"
-        "<th>Bonus je Erfolg</th>"
-        "<th>Anzahl</th>"
-        "<th>Bonus gesamt</th>"
-        "</tr></thead>"
-        f"<tbody>{''.join(table_rows)}</tbody>"
-        "<tfoot><tr>"
-        "<td colspan='3'>"
-        "<strong>Gesamtbonus</strong>"
-        "</td>"
-        "<td class='dev-subtotal'>"
-        f"<strong>"
-        f"{escape(format_bonus(total_bonus))}"
-        "</strong>"
-        "</td>"
-        "</tr></tfoot>"
-        "</table>",
-        unsafe_allow_html=True,
-    )
-
-
-# ---------------------------------------------------------
-# Alle Manager vergleichen
-# ---------------------------------------------------------
-
-st.markdown("---")
-st.subheader("Alle Manager vergleichen")
-
-comparison_rows = []
-
-for manager_id in manager_ids:
-    manager_name = get_manager_name(
-        manager_lookup[manager_id]
-    )
-
-    state_key = (
-        f"dev_bonus_{league_id}_{manager_id}"
-    )
-
-    values = st.session_state.get(
-        state_key,
-        {},
-    )
-
-    manager_total = sum(
-        values.get(rule["id"], 0)
-        * rule["bonus"]
-        for rule in BONUS_RULES
-    )
-
-    comparison_rows.append(
-        "<tr>"
-        f"<td><strong>"
-        f"{escape(manager_name)}"
-        "</strong></td>"
-        f"<td class='dev-subtotal'>"
-        f"{escape(format_bonus(manager_total))}"
-        "</td>"
-        "</tr>"
-    )
-
-st.markdown(
-    "<table class='dev-rules-table'>"
-    "<thead><tr>"
-    "<th>Manager</th>"
-    "<th>Gesamtbonus</th>"
-    "</tr></thead>"
-    f"<tbody>{''.join(comparison_rows)}</tbody>"
-    "</table>",
-    unsafe_allow_html=True,
-)
-
-st.caption(
-    "Die Werte werden während der Sitzung gespeichert. "
-    "Nach dem Abmelden gehen eingetragene Zahlen verloren."
-)
-
 
 # ---------------------------------------------------------
 # Bonusregeln anzeigen
 # ---------------------------------------------------------
 
-with st.expander(
-    "Alle Bonusregeln anzeigen"
-):
-    rules_rows = []
-    current_category = None
+st.subheader("2. Bonusregeln")
 
-    for rule in BONUS_RULES:
-        if rule["category"] != current_category:
-            current_category = rule["category"]
+rules_rows = []
+current_category = None
 
-            rules_rows.append(
-                "<tr class='dev-category-row'>"
-                f"<td colspan='3'>"
-                f"{escape(current_category)}"
-                "</td>"
-                "</tr>"
-            )
+for rule in BONUS_RULES:
+    if rule["category"] != current_category:
+        current_category = rule["category"]
 
         rules_rows.append(
-            "<tr>"
-            f"<td>{escape(rule['description'])}</td>"
-            f"<td>{escape(format_bonus(rule['bonus']))}</td>"
-            f"<td class='dev-note'>"
-            f"{escape(rule['note'])}"
+            "<tr style='background:var(--dev-header-bg);'>"
+            f"<td colspan='4'>"
+            f"<strong>{escape(current_category)}</strong>"
             "</td>"
             "</tr>"
         )
 
+    rules_rows.append(
+        "<tr>"
+        f"<td>{escape(rule['description'])}</td>"
+        f"<td>{escape(format_bonus(rule['bonus']))}</td>"
+        f"<td style='font-size:0.75rem;"
+        f"color:var(--dev-muted);'>"
+        f"{escape(rule['needed_data'])}</td>"
+        f"<td style='font-size:0.75rem;"
+        f"color:var(--dev-muted);'>"
+        f"{escape(rule['api_hint'])}</td>"
+        "</tr>"
+    )
+
+st.markdown(
+    "<table class='dev-data-table'>"
+    "<thead><tr>"
+    "<th>Erfolg</th>"
+    "<th>Bonus</th>"
+    "<th>Benötigte Daten</th>"
+    "<th>API-Vermutung</th>"
+    "</tr></thead>"
+    f"<tbody>{''.join(rules_rows)}</tbody>"
+    "</table>",
+    unsafe_allow_html=True,
+)
+
+
+# ---------------------------------------------------------
+# API-Daten laden
+# ---------------------------------------------------------
+
+st.subheader(
+    f"3. API-Daten für "
+    f"{escape(selected_manager_name)}"
+)
+
+data_cache_key = (
+    f"dev_bonus_data_v1_"
+    f"{league_id}_{selected_manager_id}"
+)
+
+if st.button(
+    f"Bonusdaten für "
+    f"{selected_manager_name} laden",
+    key="load_bonus_data",
+    type="primary",
+    use_container_width=True,
+):
+    st.session_state.pop(
+        data_cache_key,
+        None,
+    )
+
+if data_cache_key not in st.session_state:
+    with st.spinner(
+        "Bonusrelevante API-Endpunkte werden "
+        "untersucht …"
+    ):
+        results = load_manager_bonus_data(
+            api,
+            league_id,
+            selected_manager_id,
+        )
+
+    st.session_state[data_cache_key] = results
+
+else:
+    results = st.session_state[data_cache_key]
+
+
+# ---------------------------------------------------------
+# Spieltag-Punkte auswerten
+# ---------------------------------------------------------
+
+st.markdown("### Spieltag-Punkte (Team-Punkte-Boni)")
+
+all_matchdays = []
+
+for result in results["matchday"]:
+    found = extract_matchday_points(
+        result["data"]
+    )
+
+    all_matchdays.extend(found)
+
+unique_matchdays = deduplicate_matchdays(
+    all_matchdays
+)
+
+if unique_matchdays:
+    played_matchdays = [
+        entry
+        for entry in unique_matchdays
+        if entry["points"] is not None
+        and entry["points"] != 0
+    ]
+
+    st.success(
+        f"{len(played_matchdays)} Spieltage mit "
+        f"Punkten gefunden"
+    )
+
+    matchday_rows = []
+
+    team_1000_count = 0
+    team_1500_count = 0
+    team_2000_count = 0
+    matchday_winner_info = []
+
+    for entry in unique_matchdays:
+        points = entry["points"]
+
+        if points is None:
+            continue
+
+        badges = []
+
+        if points >= 2000:
+            badges.append("🏆 2.000+")
+            team_2000_count += 1
+
+        if points >= 1500:
+            if "🏆 2.000+" not in badges:
+                badges.append("🥇 1.500+")
+
+            team_1500_count += 1
+
+        if points >= 1000:
+            if not badges:
+                badges.append("✅ 1.000+")
+
+            team_1000_count += 1
+
+        highlight = (
+            "dev-highlight-row"
+            if badges
+            else ""
+        )
+
+        matchday_rows.append(
+            f"<tr class='{highlight}'>"
+            f"<td>Spieltag {entry['day']}</td>"
+            f"<td>{points:.0f}</td>"
+            f"<td>{' '.join(badges)}</td>"
+            f"<td style='font-size:0.72rem;"
+            f"color:var(--dev-muted);'>"
+            f"{entry.get('date', '—')}</td>"
+            "</tr>"
+        )
+
     st.markdown(
-        "<table class='dev-rules-table'>"
+        "<table class='dev-data-table'>"
         "<thead><tr>"
-        "<th>Erfolg</th>"
-        "<th>Bonus</th>"
-        "<th>Anmerkung</th>"
+        "<th>Spieltag</th>"
+        "<th>Punkte</th>"
+        "<th>Bonus-Schwellen</th>"
+        "<th>Datum</th>"
         "</tr></thead>"
-        f"<tbody>{''.join(rules_rows)}</tbody>"
+        f"<tbody>{''.join(matchday_rows)}</tbody>"
         "</table>",
         unsafe_allow_html=True,
     )
+
+    st.markdown("**Automatisch ermittelte Team-Boni:**")
+
+    auto_team_rows = [
+        f"- 1.000+ Punkte: **{team_1000_count}×** → "
+        f"**{format_bonus(team_1000_count * 250_000)}**",
+        f"- 1.500+ Punkte: **{team_1500_count}×** → "
+        f"**{format_bonus(team_1500_count * 1_000_000)}**",
+        f"- 2.000+ Punkte: **{team_2000_count}×** → "
+        f"**{format_bonus(team_2000_count * 2_000_000)}**",
+    ]
+
+    st.markdown("\n".join(auto_team_rows))
+
+else:
+    st.warning(
+        "Keine Spieltag-für-Spieltag-Punkte gefunden. "
+        "Klicke oben auf den Lade-Button."
+    )
+
+
+# ---------------------------------------------------------
+# Spieltagssieger ermitteln
+# ---------------------------------------------------------
+
+st.markdown("### Spieltagssieger")
+
+st.info(
+    "Um den Spieltagssieger zu ermitteln, müssen die "
+    "Spieltag-Punkte **aller** Manager verglichen werden. "
+    "Klicke auf den folgenden Button, um alle Manager "
+    "zu laden und die Spieltage zu vergleichen."
+)
+
+if st.button(
+    "Spieltagssieger für alle Manager ermitteln",
+    key="load_all_matchdays",
+    use_container_width=True,
+):
+    all_manager_matchdays = {}
+
+    progress = st.progress(
+        0.0,
+        text="Spieltage aller Manager werden geladen …",
+    )
+
+    for index, manager_id in enumerate(
+        manager_ids
+    ):
+        manager_name = get_manager_name(
+            manager_lookup[manager_id]
+        )
+
+        base = (
+            f"/v4/leagues/{league_id}"
+            f"/managers/{manager_id}"
+        )
+
+        paths = [
+            f"{base}/performance",
+            f"{base}/dashboard",
+            base,
+        ]
+
+        manager_matchdays = []
+
+        for path in paths:
+            result = try_endpoint(api, path)
+
+            if result["success"]:
+                found = extract_matchday_points(
+                    result["data"]
+                )
+
+                manager_matchdays.extend(found)
+
+                if found:
+                    break
+
+        all_manager_matchdays[manager_id] = (
+            deduplicate_matchdays(
+                manager_matchdays
+            )
+        )
+
+        progress.progress(
+            (index + 1) / len(manager_ids),
+            text=(
+                f"Spieltage werden geladen … "
+                f"{index + 1} von {len(manager_ids)}"
+            ),
+        )
+
+    progress.empty()
+
+    all_days = set()
+
+    for matchdays in all_manager_matchdays.values():
+        for entry in matchdays:
+            if (
+                entry["points"] is not None
+                and entry["points"] != 0
+            ):
+                all_days.add(entry["day"])
+
+    winner_rows = []
+    winner_counts = {
+        manager_id: 0
+        for manager_id in manager_ids
+    }
+
+    for day in sorted(all_days):
+        best_manager = None
+        best_points = -1
+
+        for manager_id in manager_ids:
+            matchdays = all_manager_matchdays.get(
+                manager_id,
+                [],
+            )
+
+            for entry in matchdays:
+                if (
+                    entry["day"] == day
+                    and entry["points"] is not None
+                    and entry["points"] > best_points
+                ):
+                    best_points = entry["points"]
+                    best_manager = manager_id
+
+        if best_manager:
+            winner_counts[best_manager] += 1
+            winner_name = get_manager_name(
+                manager_lookup[best_manager]
+            )
+
+            is_selected = (
+                best_manager
+                == selected_manager_id
+            )
+
+            highlight = (
+                "dev-highlight-row"
+                if is_selected
+                else ""
+            )
+
+            winner_rows.append(
+                f"<tr class='{highlight}'>"
+                f"<td>Spieltag {day}</td>"
+                f"<td><strong>"
+                f"{escape(winner_name)}"
+                f"</strong></td>"
+                f"<td>{best_points:.0f}</td>"
+                "</tr>"
+            )
+
+    if winner_rows:
+        st.markdown(
+            "<table class='dev-data-table'>"
+            "<thead><tr>"
+            "<th>Spieltag</th>"
+            "<th>Sieger</th>"
+            "<th>Punkte</th>"
+            "</tr></thead>"
+            f"<tbody>{''.join(winner_rows)}</tbody>"
+            "</table>",
+            unsafe_allow_html=True,
+        )
+
+        selected_wins = winner_counts.get(
+            selected_manager_id,
+            0,
+        )
+
+        st.markdown(
+            f"**{escape(selected_manager_name)}** "
+            f"hat **{selected_wins}** Spieltage gewonnen → "
+            f"**{format_bonus(selected_wins * 1_000_000)}**"
+        )
+
+    else:
+        st.warning(
+            "Keine Spieltagssieger ermittelbar."
+        )
+
+
+# ---------------------------------------------------------
+# Transferhistorie
+# ---------------------------------------------------------
+
+st.markdown("### Transferhistorie")
+
+all_transfers = []
+
+for result in results["transfers"]:
+    found = extract_transfer_entries(
+        result["data"]
+    )
+
+    all_transfers.extend(found)
+
+if all_transfers:
+    st.success(
+        f"{len(all_transfers)} mögliche "
+        f"Transfereinträge gefunden"
+    )
+
+    with st.expander(
+        f"Alle {len(all_transfers)} Transfereinträge "
+        "anzeigen"
+    ):
+        for index, transfer in enumerate(
+            all_transfers[:50],
+            start=1,
+        ):
+            st.write(f"**Transfer {index}:**")
+            st.json(transfer)
+
+else:
+    st.warning(
+        "Keine Transfereinträge gefunden."
+    )
+
+    st.caption(
+        "Klicke oben auf den Lade-Button, "
+        "falls noch nicht geschehen."
+    )
+
+
+# ---------------------------------------------------------
+# MVP-Suche
+# ---------------------------------------------------------
+
+st.markdown("### MVP-Daten")
+
+all_mvp_hints = []
+
+for result in results["matchday_details"]:
+    found = search_for_mvp(
+        result["data"]
+    )
+
+    for hint in found:
+        hint["source"] = result["path"]
+
+    all_mvp_hints.extend(found)
+
+for result in results["league_feed"]:
+    found = search_for_mvp(
+        result["data"]
+    )
+
+    for hint in found:
+        hint["source"] = result["path"]
+
+    all_mvp_hints.extend(found)
+
+if all_mvp_hints:
+    st.success(
+        f"{len(all_mvp_hints)} MVP-Hinweise gefunden"
+    )
+
+    for hint in all_mvp_hints[:20]:
+        st.markdown(
+            f"<div class='dev-endpoint-path'>"
+            f"<strong>{escape(hint['source'])}</strong>"
+            f" → {escape(hint['path'])}"
+            "</div>",
+            unsafe_allow_html=True,
+        )
+
+        st.json(hint["value"])
+
+else:
+    st.warning(
+        "Keine MVP-Felder in den untersuchten "
+        "Endpunkten gefunden."
+    )
+
+
+# ---------------------------------------------------------
+# Rohdaten aller Endpunkte
+# ---------------------------------------------------------
+
+st.markdown("### Alle geladenen Endpunkte")
+
+for group_name, group_results in results.items():
+    group_labels = {
+        "matchday": "Spieltag-Endpunkte",
+        "transfers": "Transfer-Endpunkte",
+        "matchday_details": "Spieltag-Details",
+        "league_feed": "Liga-Feed",
+    }
+
+    label = group_labels.get(
+        group_name,
+        group_name,
+    )
+
+    with st.expander(
+        f"{label} ({len(group_results)} erfolgreich)"
+    ):
+        if not group_results:
+            st.info(
+                "Kein Endpunkt in dieser Gruppe "
+                "hat Daten geliefert."
+            )
+
+        for result in group_results:
+            st.markdown(
+                f"<div class='dev-endpoint-path'>"
+                f"{escape(result['path'])}"
+                "</div>",
+                unsafe_allow_html=True,
+            )
+
+            st.json(
+                result["data"],
+                expanded=False,
+            )
+
+            st.download_button(
+                label=(
+                    f"JSON herunterladen: "
+                    f"{result['path']}"
+                ),
+                data=safe_json(
+                    result["data"]
+                ),
+                file_name=(
+                    f"dev_{group_name}_"
+                    f"{abs(hash(result['path']))}"
+                    ".json"
+                ),
+                mime="application/json",
+                key=(
+                    f"dev_download_"
+                    f"{group_name}_"
+                    f"{abs(hash(result['path']))}"
+                ),
+                use_container_width=True,
+            )
