@@ -2737,6 +2737,26 @@ def render_league_table(
                     "</span>"
                 )
 
+            elif column == "Bonus":
+                content = signed_value_html(
+                    row[column]
+                )
+
+                if (
+                    row.get("Ich")
+                    and "_Bonus_berechnet" in row.index
+                ):
+                    berechnet = row["_Bonus_berechnet"]
+
+                    if berechnet != row[column]:
+                        content += (
+                            "<br><span style='"
+                            "font-size:0.7em;"
+                            "color:var(--kb-muted);'>"
+                            f"({escape(format_currency(berechnet))})"
+                            "</span>"
+                        )
+
             elif column in signed_columns:
                 content = signed_value_html(
                     row[column]
@@ -3842,6 +3862,13 @@ if view == "Liga":
                             )
                         )
                         else calculate_manager_bonus(
+                            api,
+                            league_id,
+                            manager_id,
+                        )
+                    ),
+                    "_Bonus_berechnet": (
+                        calculate_manager_bonus(
                             api,
                             league_id,
                             manager_id,
