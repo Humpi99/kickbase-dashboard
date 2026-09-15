@@ -2315,6 +2315,172 @@ def compute_own_bonus(
     }
 
 
+def calculate_manager_bonus(api, league_id, manager_id):
+    """Berechnet den geschätzten Bonus eines Managers."""
+    cache_key = (
+        f"manager_bonus_v1_"
+        f"{league_id}_{manager_id}"
+    )
+
+    if cache_key in st.session_state:
+        return st.session_state[cache_key]
+
+    base = (
+        f"/v4/leagues/{league_id}"
+        f"/managers/{manager_id}"
+    )
+
+    paths = [
+        f"{base}/performance",
+        f"{base}/dashboard",
+        base,
+    ]
+
+    matchdays = []
+
+    for path in paths:
+        try:
+            data = api.get(path)
+        except Exception:
+            continue
+
+        found = _extract_bonus_matchdays(data)
+
+        if found:
+            matchdays = found
+            break
+
+    # Pauschale
+    pauschale = 2_500_000
+
+    # Tägliche Anmeldung
+    season_start = datetime(2026, 8, 10)
+    days_since = max(
+        0,
+        (datetime.now() - season_start).days,
+    )
+    daily_bonus = days_since * 100_000
+
+    # Punkte-Bonus
+    total_points = sum(
+        entry["points"]
+        for entry in matchdays
+        if entry["points"] is not None
+    )
+    points_bonus = total_points * 1_000
+
+    # Team-Punkte-Schwellen
+    team_1000 = 0
+    team_1500 = 0
+    team_2000 = 0
+    wins = 0
+
+    for entry in matchdays:
+        points = entry["points"]
+        if points is None:
+            continue
+
+        if points >= 1000:
+            team_1000 += 1
+        if points >= 1500:
+            team_1500 += 1
+        if points >= 2000:
+            team_2000 += 1
+
+        if entry.get("tw") is True:
+            wins += 1
+
+    total_bonus = (
+        pauschale
+        + daily_bonus
+        + points_bonus
+        + team_1000 * 250_000
+        + team_1500 * 1_000_000
+        + team_2000 * 2_000_000
+        + wins * 1_000_000
+    )
+
+    st.session_state[cache_key] = total_bonus
+
+    return total_bonus
+
+
+def _extract_bonus_matchdays(data, depth=0):
+    """Sucht Spieltage der aktuellen Saison."""
+    if depth > 10:
+        return []
+
+    if isinstance(data, dict):
+        season_name = data.get("sn")
+        season_id = data.get("sid")
+
+        if (
+            season_name is not None
+            or season_id is not None
+        ):
+            now = datetime.now()
+            start_year = (
+                now.year
+                if now.month >= 7
+                else now.year - 1
+            )
+            expected = (
+                f"{start_year}/{start_year + 1}"
+            )
+
+            if str(season_name) != expected:
+                return []
+
+            inner = data.get("it", [])
+
+            if isinstance(inner, list):
+                matchdays = []
+
+                for entry in inner:
+                    if not isinstance(entry, dict):
+                        continue
+
+                    day = entry.get("day")
+                    if day is None:
+                        continue
+
+                    points = to_number(
+                        entry.get("mdp")
+                    )
+
+                    if (
+                        points is None
+                        or points == 0
+                    ):
+                        continue
+
+                    matchdays.append({
+                        "day": day,
+                        "points": points,
+                        "tw": entry.get("tw"),
+                    })
+
+                if matchdays:
+                    return matchdays
+
+        for value in data.values():
+            result = _extract_bonus_matchdays(
+                value, depth + 1,
+            )
+            if result:
+                return result
+
+    elif isinstance(data, list):
+        for item in data:
+            result = _extract_bonus_matchdays(
+                item, depth + 1,
+            )
+            if result:
+                return result
+
+    return []
+
+
 # ---------------------------------------------------------
 # HTML-Tabellen
 # ---------------------------------------------------------
@@ -2462,6 +2628,7 @@ def league_header_class(column):
         return "league-header-trend"
 
     if column in {
+        "Bonus",
         "Budget",
         "Nach Verkauf",
         "Budget Spieltag",
@@ -2480,6 +2647,7 @@ def format_league_value(column, value):
         "Start 11",
         "Trading",
         "Kaderwert",
+        "Bonus",
         "S11 Spieltag",
     }:
         return format_currency(value)
@@ -2515,6 +2683,7 @@ def render_league_table(
     rows = []
 
     signed_columns = {
+        "Bonus",
         "Gewinn gesamt",
         "Trend Start 11",
         "Trend Trading",
@@ -3664,6 +3833,11 @@ if view == "Liga":
                             "squad_value"
                         ]
                     ),
+                    "Bonus": calculate_manager_bonus(
+                        api,
+                        league_id,
+                        manager_id,
+                    ),
                     "Gewinn gesamt": (
                         manager_stats[
                             "profit_in_club"
@@ -3707,6 +3881,12 @@ if view == "Liga":
 
         st.session_state[cache_key] = rows
 
+    if bonus_info and own_budget is not None:
+        league_frame.loc[
+            league_frame["Ich"],
+            "Bonus",
+        ] = bonus_info["bonus"]
+    
     league_frame = pd.DataFrame(
         st.session_state[cache_key]
     )
@@ -3741,6 +3921,7 @@ if view == "Liga":
             "Punkte",
             "Kader",
             "Kaderwert",
+            "Bonus",
             "Gewinn gesamt",
             "Trend gesamt",
             "Budget",
@@ -3757,6 +3938,7 @@ if view == "Liga":
             "Start 11",
             "Trading",
             "Kaderwert",
+            "Bonus",
             "Gewinn gesamt",
             "Trend Start 11",
             "Trend Trading",
@@ -3784,7 +3966,11 @@ if view == "Liga":
     st.caption(
         "Hellgrau: Mannschaftswerte. "
         "Grün: Trends. "
-        "Orange: Budget und Prognosen."
+        "Orange: Bonus, Budget und Prognosen. "
+        "Bonus = 2,5M Pauschale + Login + "
+        "Punkte×1k + Team-Schwellen + "
+        "Spieltagssieger (ohne MVP/Transfers). "
+        "Eigener Bonus = echte Differenz aus Budget."
     )
 
     st.markdown(
