@@ -2302,17 +2302,6 @@ def compute_own_bonus(
         + (realized or 0.0)
     )
 
-manager_calculated_bonus = calculate_manager_bonus(
-    api,
-    league_id,
-    selected_manager_id,
-)
-
-if viewing_self and bonus_info:
-    manager_bonus = bonus_info["bonus"]
-else:
-    manager_bonus = manager_calculated_bonus
-    
     calculated = (
         BASE_BUDGET
         + total_profit
@@ -2324,7 +2313,6 @@ else:
         "real": real_balance,
         "bonus": real_balance - calculated,
     }
-
 
 def calculate_manager_bonus(api, league_id, manager_id):
     """Berechnet den geschätzten Bonus eines Managers."""
@@ -3932,15 +3920,6 @@ if view == "Liga":
 
         st.session_state[cache_key] = rows
 
-    try:
-        if bonus_info and own_budget is not None:
-            league_frame.loc[
-                league_frame["Ich"],
-                "Bonus",
-            ] = bonus_info["bonus"]
-    except Exception:
-        pass
-    
     league_frame = pd.DataFrame(
         st.session_state[cache_key]
     )
@@ -4246,6 +4225,17 @@ total_profit = stats[
 
 if realized_profit is not None:
     total_profit += realized_profit
+
+manager_calculated_bonus = calculate_manager_bonus(
+    api,
+    league_id,
+    selected_manager_id,
+)
+
+if viewing_self and bonus_info:
+    manager_bonus = bonus_info["bonus"]
+else:
+    manager_bonus = manager_calculated_bonus
 
 budget = compute_budget(
     stats,
