@@ -1778,7 +1778,7 @@ for group_name, group_results in results.items():
     # ============================================================
     st.subheader("🔍 Diagnose: Endpunkt-Suche Runde 2")
 
-    if st.button("🧪 Neue Endpunkte testen"):
+    if st.button("🧪 Runde 2: Neue Endpunkte testen"):
         import requests as req2
 
         token = st.session_state.get("token", "")
