@@ -1772,3 +1772,118 @@ for group_name, group_results in results.items():
                 ),
                 use_container_width=True,
             )
+
+  # ============================================================
+    # DIAGNOSE: Neue Endpunkt-Suche (Runde 2)
+    # ============================================================
+    st.subheader("🔍 Diagnose: Endpunkt-Suche Runde 2")
+
+    if st.button("🧪 Neue Endpunkte testen"):
+        import requests as req2
+
+        token = st.session_state.get("token", "")
+        league_id = st.session_state.get("league_id", "")
+        manager_id = st.session_state.get("manager_id", "")
+        base = "https://api.kickbase.com"
+        headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+
+        st.write(f"**Liga:** `{league_id}` | **Manager:** `{manager_id}`")
+
+        # --- BLOCK A: Liga-Ebene (ohne Spieltag, ohne Manager) ---
+        st.markdown("### Block A: Liga-Ebene (ohne Spieltag)")
+        endpoints_a = [
+            f"/v4/leagues/{league_id}/matchdays",
+            f"/v4/leagues/{league_id}/matchday",
+            f"/v4/leagues/{league_id}/live",
+            f"/v4/leagues/{league_id}/ranking",
+            f"/v4/leagues/{league_id}/feed",
+            f"/v4/leagues/{league_id}/stats",
+            f"/v4/leagues/{league_id}/lineup",
+            f"/v4/leagues/{league_id}/results",
+        ]
+        for ep in endpoints_a:
+            try:
+                r = req2.get(f"{base}{ep}", headers=headers, timeout=10)
+                if r.status_code == 200:
+                    data = r.json()
+                    keys = list(data.keys()) if isinstance(data, dict) else f"Liste mit {len(data)} Einträgen"
+                    st.success(f"✅ `{ep}`: **Status 200** → Keys: `{keys}`")
+                    with st.expander(f"Rohdaten: {ep}"):
+                        st.json(data)
+                else:
+                    st.error(f"❌ `{ep}`: Status {r.status_code}")
+            except Exception as e:
+                st.error(f"❌ `{ep}`: Fehler → {e}")
+
+        # --- BLOCK B: Wettbewerb-Ebene ---
+        st.markdown("### Block B: Wettbewerb-Ebene (competitions)")
+        endpoints_b = [
+            "/v4/competitions/1/matchdays",
+            "/v4/competitions/1/matchday",
+            "/v4/competitions/1/table",
+            "/v4/competitions/1/ranking",
+            "/v4/competitions/1/live",
+            "/v4/competitions/1/results",
+        ]
+        for ep in endpoints_b:
+            try:
+                r = req2.get(f"{base}{ep}", headers=headers, timeout=10)
+                if r.status_code == 200:
+                    data = r.json()
+                    keys = list(data.keys()) if isinstance(data, dict) else f"Liste mit {len(data)} Einträgen"
+                    st.success(f"✅ `{ep}`: **Status 200** → Keys: `{keys}`")
+                    with st.expander(f"Rohdaten: {ep}"):
+                        st.json(data)
+                else:
+                    st.error(f"❌ `{ep}`: Status {r.status_code}")
+            except Exception as e:
+                st.error(f"❌ `{ep}`: Fehler → {e}")
+
+        # --- BLOCK C: Liga + Spieltag (ohne Manager) ---
+        st.markdown("### Block C: Liga + Spieltag 1 (ohne Manager)")
+        endpoints_c = [
+            f"/v4/leagues/{league_id}/matchdays/1",
+            f"/v4/leagues/{league_id}/matchday/1",
+            f"/v4/leagues/{league_id}/live/1",
+            f"/v4/leagues/{league_id}/ranking/1",
+            f"/v4/leagues/{league_id}/feed/1",
+            f"/v4/leagues/{league_id}/results/1",
+        ]
+        for ep in endpoints_c:
+            try:
+                r = req2.get(f"{base}{ep}", headers=headers, timeout=10)
+                if r.status_code == 200:
+                    data = r.json()
+                    keys = list(data.keys()) if isinstance(data, dict) else f"Liste mit {len(data)} Einträgen"
+                    st.success(f"✅ `{ep}`: **Status 200** → Keys: `{keys}`")
+                    with st.expander(f"Rohdaten: {ep}"):
+                        st.json(data)
+                else:
+                    st.error(f"❌ `{ep}`: Status {r.status_code}")
+            except Exception as e:
+                st.error(f"❌ `{ep}`: Fehler → {e}")
+
+        # --- BLOCK D: Manager ohne Spieltag ---
+        st.markdown("### Block D: Manager-Endpunkte ohne Spieltag")
+        endpoints_d = [
+            f"/v4/leagues/{league_id}/managers/{manager_id}/lineup",
+            f"/v4/leagues/{league_id}/managers/{manager_id}/feed",
+            f"/v4/leagues/{league_id}/managers/{manager_id}/stats",
+            f"/v4/leagues/{league_id}/managers/{manager_id}/squad",
+            f"/v4/leagues/{league_id}/managers/{manager_id}/performance",
+        ]
+        for ep in endpoints_d:
+            try:
+                r = req2.get(f"{base}{ep}", headers=headers, timeout=10)
+                if r.status_code == 200:
+                    data = r.json()
+                    keys = list(data.keys()) if isinstance(data, dict) else f"Liste mit {len(data)} Einträgen"
+                    st.success(f"✅ `{ep}`: **Status 200** → Keys: `{keys}`")
+                    with st.expander(f"Rohdaten: {ep}"):
+                        st.json(data)
+                else:
+                    st.error(f"❌ `{ep}`: Status {r.status_code}")
+            except Exception as e:
+                st.error(f"❌ `{ep}`: Fehler → {e}")
+
+        st.info("💡 Schick mir einen Screenshot der Ergebnisse – besonders von den grünen ✅ Treffern!")
