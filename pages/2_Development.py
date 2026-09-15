@@ -1132,7 +1132,17 @@ if unique_matchdays:
 
     st.markdown("**Automatisch ermittelte Boni:**")
 
+      total_points = sum(
+        entry["points"]
+        for entry in unique_matchdays
+        if entry["points"] is not None
+    )
+
+    points_bonus = total_points * 1_000
+
     auto_rows = [
+        f"- Gesamtpunkte: **{total_points:.0f}** × 1.000 → "
+        f"**{format_bonus(points_bonus)}**",
         f"- 1.000+ Team-Punkte: **{team_1000_count}×** → "
         f"**{format_bonus(team_1000_count * 250_000)}**",
         f"- 1.500+ Team-Punkte: **{team_1500_count}×** → "
@@ -1143,8 +1153,20 @@ if unique_matchdays:
         f"**{format_bonus(matchday_wins * 1_000_000)}**",
     ]
 
-    st.markdown("\n".join(auto_rows))
+    total_matchday_bonus = (
+        points_bonus
+        + team_1000_count * 250_000
+        + team_1500_count * 1_000_000
+        + team_2000_count * 2_000_000
+        + matchday_wins * 1_000_000
+    )
 
+    auto_rows.append(
+        f"\n**Summe Spieltag-Boni: "
+        f"{format_bonus(total_matchday_bonus)}**"
+    )
+
+    st.markdown("\n".join(auto_rows))
 else:
     st.warning(
         "Keine Spieltage der aktuellen Saison gefunden. "
