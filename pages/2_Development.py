@@ -1132,7 +1132,7 @@ if unique_matchdays:
 
     st.markdown("**Automatisch ermittelte Boni:**")
 
-      total_points = sum(
+    total_points = sum(
         entry["points"]
         for entry in unique_matchdays
         if entry["points"] is not None
