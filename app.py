@@ -2628,7 +2628,6 @@ def league_header_class(column):
         return "league-header-trend"
 
     if column in {
-        "Bonus",
         "Budget",
         "Nach Verkauf",
         "Budget Spieltag",
@@ -3833,10 +3832,20 @@ if view == "Liga":
                             "squad_value"
                         ]
                     ),
-                    "Bonus": calculate_manager_bonus(
-                        api,
-                        league_id,
-                        manager_id,
+                    "Bonus": (
+                        bonus_info["bonus"]
+                        if (
+                            bonus_info
+                            and is_own_manager(
+                                own_manager_id,
+                                manager_id,
+                            )
+                        )
+                        else calculate_manager_bonus(
+                            api,
+                            league_id,
+                            manager_id,
+                        )
                     ),
                     "Gewinn gesamt": (
                         manager_stats[
