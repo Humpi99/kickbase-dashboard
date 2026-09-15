@@ -3932,7 +3932,7 @@ if view == "Liga":
 
     league_frame["Budget"] = (
         BASE_BUDGET
-        + bonus
+        + league_frame["Bonus"]
         + league_frame["Gewinn gesamt"]
         - league_frame["Kaderwert"]
     )
