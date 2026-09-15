@@ -509,8 +509,10 @@ def calculate_manager_bonus(matchdays):
     # Spieltagssieger
     wins_bonus = wins * 1_000_000
 
-    total_bonus = daily_bonus + points_bonus + bonus_1000 + bonus_1500 + bonus_2000 + wins_bonus
+    pauschale = 2_500_000
 
+    total_bonus = pauschale + daily_bonus + points_bonus + bonus_1000 + bonus_1500 + bonus_2000 + wins_bonus
+    
     return {
         "total_points": total_points,
         "days": days_since,
@@ -524,6 +526,7 @@ def calculate_manager_bonus(matchdays):
         "bonus_2000": bonus_2000,
         "wins": wins,
         "wins_bonus": wins_bonus,
+        "pauschale": pauschale,
         "total_bonus": total_bonus,
     }
 
