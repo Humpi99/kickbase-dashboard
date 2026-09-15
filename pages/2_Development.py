@@ -624,45 +624,86 @@ def load_manager_bonus_data(
 # Spieltagsdaten auswerten
 # ---------------------------------------------------------
 
-def extract_matchday_points(data, depth=0):
-    """Sucht Spieltag-für-Spieltag-Punkte in den Daten."""
-    matchdays = []
-
+def extract_current_season_matchdays(data, depth=0):
+    """
+    Sucht den aktuellen Saisonblock und gibt
+    nur dessen Spieltage zurück.
+    """
     if depth > 10:
-        return matchdays
+        return []
 
     if isinstance(data, dict):
-        day = data.get("day")
-        mdp = to_number(data.get("mdp"))
+        season_name = data.get("sn")
+        season_id = data.get("sid")
 
-        if day is not None and mdp is not None:
-            matchdays.append(
-                {
-                    "day": day,
-                    "points": mdp,
-                    "current": data.get("cur"),
-                    "date": data.get("md"),
-                }
+        if season_name is not None or season_id is not None:
+            now = datetime.now()
+
+            start_year = (
+                now.year
+                if now.month >= 7
+                else now.year - 1
             )
+
+            expected_name = (
+                f"{start_year}/{start_year + 1}"
+            )
+
+            is_current = (
+                str(season_name) == expected_name
+            )
+
+            if not is_current:
+                return []
+
+            inner_list = data.get("it", [])
+
+            if isinstance(inner_list, list):
+                matchdays = []
+
+                for entry in inner_list:
+                    if not isinstance(entry, dict):
+                        continue
+
+                    day = entry.get("day")
+                    mdp = to_number(entry.get("mdp"))
+
+                    if day is None:
+                        continue
+
+                    matchdays.append(
+                        {
+                            "day": day,
+                            "points": mdp,
+                            "current": entry.get("cur"),
+                            "date": entry.get("md"),
+                            "tw": entry.get("tw"),
+                        }
+                    )
+
+                if matchdays:
+                    return matchdays
 
         for value in data.values():
-            matchdays.extend(
-                extract_matchday_points(
-                    value,
-                    depth + 1,
-                )
+            result = extract_current_season_matchdays(
+                value,
+                depth + 1,
             )
+
+            if result:
+                return result
 
     elif isinstance(data, list):
         for item in data:
-            matchdays.extend(
-                extract_matchday_points(
-                    item,
-                    depth + 1,
-                )
+            result = extract_current_season_matchdays(
+                item,
+                depth + 1,
             )
 
-    return matchdays
+            if result:
+                return result
+
+    return []
 
 
 def deduplicate_matchdays(matchdays):
@@ -995,11 +1036,13 @@ st.markdown("### Spieltag-Punkte (Team-Punkte-Boni)")
 all_matchdays = []
 
 for result in results["matchday"]:
-    found = extract_matchday_points(
+    found = extract_current_season_matchdays(
         result["data"]
     )
 
-    all_matchdays.extend(found)
+    if found:
+        all_matchdays = found
+        break
 
 unique_matchdays = deduplicate_matchdays(
     all_matchdays
@@ -1014,8 +1057,8 @@ if unique_matchdays:
     ]
 
     st.success(
-        f"{len(played_matchdays)} Spieltage mit "
-        f"Punkten gefunden"
+        f"{len(played_matchdays)} Spieltage der "
+        f"aktuellen Saison mit Punkten gefunden"
     )
 
     matchday_rows = []
@@ -1023,7 +1066,7 @@ if unique_matchdays:
     team_1000_count = 0
     team_1500_count = 0
     team_2000_count = 0
-    matchday_winner_info = []
+    matchday_wins = 0
 
     for entry in unique_matchdays:
         points = entry["points"]
@@ -1049,6 +1092,12 @@ if unique_matchdays:
 
             team_1000_count += 1
 
+        is_winner = entry.get("tw") is True
+
+        if is_winner:
+            badges.append("⭐ Spieltagssieger")
+            matchday_wins += 1
+
         highlight = (
             "dev-highlight-row"
             if badges
@@ -1059,6 +1108,7 @@ if unique_matchdays:
             f"<tr class='{highlight}'>"
             f"<td>Spieltag {entry['day']}</td>"
             f"<td>{points:.0f}</td>"
+            f"<td>{'Ja' if is_winner else '—'}</td>"
             f"<td>{' '.join(badges)}</td>"
             f"<td style='font-size:0.72rem;"
             f"color:var(--dev-muted);'>"
@@ -1071,6 +1121,7 @@ if unique_matchdays:
         "<thead><tr>"
         "<th>Spieltag</th>"
         "<th>Punkte</th>"
+        "<th>Sieger</th>"
         "<th>Bonus-Schwellen</th>"
         "<th>Datum</th>"
         "</tr></thead>"
@@ -1079,50 +1130,50 @@ if unique_matchdays:
         unsafe_allow_html=True,
     )
 
-    st.markdown("**Automatisch ermittelte Team-Boni:**")
+    st.markdown("**Automatisch ermittelte Boni:**")
 
-    auto_team_rows = [
-        f"- 1.000+ Punkte: **{team_1000_count}×** → "
+    auto_rows = [
+        f"- 1.000+ Team-Punkte: **{team_1000_count}×** → "
         f"**{format_bonus(team_1000_count * 250_000)}**",
-        f"- 1.500+ Punkte: **{team_1500_count}×** → "
+        f"- 1.500+ Team-Punkte: **{team_1500_count}×** → "
         f"**{format_bonus(team_1500_count * 1_000_000)}**",
-        f"- 2.000+ Punkte: **{team_2000_count}×** → "
+        f"- 2.000+ Team-Punkte: **{team_2000_count}×** → "
         f"**{format_bonus(team_2000_count * 2_000_000)}**",
+        f"- Spieltagssieger (tw=true): **{matchday_wins}×** → "
+        f"**{format_bonus(matchday_wins * 1_000_000)}**",
     ]
 
-    st.markdown("\n".join(auto_team_rows))
+    st.markdown("\n".join(auto_rows))
 
 else:
     st.warning(
-        "Keine Spieltag-für-Spieltag-Punkte gefunden. "
+        "Keine Spieltage der aktuellen Saison gefunden. "
         "Klicke oben auf den Lade-Button."
     )
-
 
 # ---------------------------------------------------------
 # Spieltagssieger ermitteln
 # ---------------------------------------------------------
 
-st.markdown("### Spieltagssieger")
+st.markdown("### Spieltagssieger aller Manager")
 
 st.info(
-    "Um den Spieltagssieger zu ermitteln, müssen die "
-    "Spieltag-Punkte **aller** Manager verglichen werden. "
-    "Klicke auf den folgenden Button, um alle Manager "
-    "zu laden und die Spieltage zu vergleichen."
+    "Die Spieltagssieger werden direkt aus dem Feld "
+    "tw=true der aktuellen Saison abgeleitet. Klicke "
+    "auf den Button, um alle Manager zu laden."
 )
 
 if st.button(
-    "Spieltagssieger für alle Manager ermitteln",
+    "Spieltagssieger aller Manager laden",
     key="load_all_matchdays",
     use_container_width=True,
 ):
-    all_manager_matchdays = {}
-
     progress = st.progress(
         0.0,
         text="Spieltage aller Manager werden geladen …",
     )
+
+    all_manager_results = {}
 
     for index, manager_id in enumerate(
         manager_ids
@@ -1142,127 +1193,82 @@ if st.button(
             base,
         ]
 
-        manager_matchdays = []
+        matchdays = []
 
         for path in paths:
             result = try_endpoint(api, path)
 
             if result["success"]:
-                found = extract_matchday_points(
+                found = extract_current_season_matchdays(
                     result["data"]
                 )
 
-                manager_matchdays.extend(found)
-
                 if found:
+                    matchdays = found
                     break
 
-        all_manager_matchdays[manager_id] = (
-            deduplicate_matchdays(
-                manager_matchdays
-            )
+        wins = sum(
+            1
+            for entry in matchdays
+            if entry.get("tw") is True
         )
+
+        all_manager_results[manager_id] = {
+            "name": manager_name,
+            "matchdays": matchdays,
+            "wins": wins,
+        }
 
         progress.progress(
             (index + 1) / len(manager_ids),
             text=(
-                f"Spieltage werden geladen … "
+                f"Manager werden geladen … "
                 f"{index + 1} von {len(manager_ids)}"
             ),
         )
 
     progress.empty()
 
-    all_days = set()
-
-    for matchdays in all_manager_matchdays.values():
-        for entry in matchdays:
-            if (
-                entry["points"] is not None
-                and entry["points"] != 0
-            ):
-                all_days.add(entry["day"])
-
     winner_rows = []
-    winner_counts = {
-        manager_id: 0
-        for manager_id in manager_ids
-    }
 
-    for day in sorted(all_days):
-        best_manager = None
-        best_points = -1
+    for manager_id in manager_ids:
+        info = all_manager_results[manager_id]
 
-        for manager_id in manager_ids:
-            matchdays = all_manager_matchdays.get(
-                manager_id,
-                [],
-            )
-
-            for entry in matchdays:
-                if (
-                    entry["day"] == day
-                    and entry["points"] is not None
-                    and entry["points"] > best_points
-                ):
-                    best_points = entry["points"]
-                    best_manager = manager_id
-
-        if best_manager:
-            winner_counts[best_manager] += 1
-            winner_name = get_manager_name(
-                manager_lookup[best_manager]
-            )
-
-            is_selected = (
-                best_manager
-                == selected_manager_id
-            )
-
-            highlight = (
-                "dev-highlight-row"
-                if is_selected
-                else ""
-            )
-
-            winner_rows.append(
-                f"<tr class='{highlight}'>"
-                f"<td>Spieltag {day}</td>"
-                f"<td><strong>"
-                f"{escape(winner_name)}"
-                f"</strong></td>"
-                f"<td>{best_points:.0f}</td>"
-                "</tr>"
-            )
-
-    if winner_rows:
-        st.markdown(
-            "<table class='dev-data-table'>"
-            "<thead><tr>"
-            "<th>Spieltag</th>"
-            "<th>Sieger</th>"
-            "<th>Punkte</th>"
-            "</tr></thead>"
-            f"<tbody>{''.join(winner_rows)}</tbody>"
-            "</table>",
-            unsafe_allow_html=True,
+        is_selected = (
+            manager_id == selected_manager_id
         )
 
-        selected_wins = winner_counts.get(
-            selected_manager_id,
-            0,
+        highlight = (
+            "dev-highlight-row"
+            if is_selected
+            else ""
         )
 
-        st.markdown(
-            f"**{escape(selected_manager_name)}** "
-            f"hat **{selected_wins}** Spieltage gewonnen → "
-            f"**{format_bonus(selected_wins * 1_000_000)}**"
+        bonus = format_bonus(
+            info["wins"] * 1_000_000
         )
 
-    else:
-        st.warning(
-            "Keine Spieltagssieger ermittelbar."
+        winner_rows.append(
+            f"<tr class='{highlight}'>"
+            f"<td><strong>"
+            f"{escape(info['name'])}"
+            f"</strong></td>"
+            f"<td>{info['wins']}</td>"
+            f"<td>{escape(bonus)}</td>"
+            "</tr>"
         )
+
+    st.markdown(
+        "<table class='dev-data-table'>"
+        "<thead><tr>"
+        "<th>Manager</th>"
+        "<th>Spieltage gewonnen</th>"
+        "<th>Bonus</th>"
+        "</tr></thead>"
+        f"<tbody>{''.join(winner_rows)}</tbody>"
+        "</table>",
+        unsafe_allow_html=True,
+    )
 
 
 # ---------------------------------------------------------
