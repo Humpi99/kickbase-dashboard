@@ -1294,6 +1294,329 @@ if st.button(
 
 
 # ---------------------------------------------------------
+# MVP und Aufstellungen je Spieltag
+# ---------------------------------------------------------
+
+st.markdown("### MVP und Aufstellungen je Spieltag")
+
+st.info(
+    "Hier werden Endpunkte gesucht, die zeigen, "
+    "welche Spieler ein Manager an einem Spieltag "
+    "aufgestellt hatte und wer MVP war."
+)
+
+if st.button(
+    "MVP- und Aufstellungsdaten suchen",
+    key="load_mvp_lineup_data",
+    use_container_width=True,
+):
+    # Schritt 1: Spieltage der aktuellen Saison ermitteln
+    played_days = []
+
+    for result in results["matchday"]:
+        found = extract_current_season_matchdays(
+            result["data"]
+        )
+
+        if found:
+            played_days = [
+                entry
+                for entry in found
+                if entry["points"] is not None
+                and entry["points"] != 0
+            ]
+
+            break
+
+    if not played_days:
+        st.warning(
+            "Keine gespielten Spieltage gefunden. "
+            "Lade zuerst oben die Bonusdaten."
+        )
+
+    else:
+        st.write(
+            f"**{len(played_days)} gespielte "
+            f"Spieltage gefunden.**"
+        )
+
+        # Schritt 2: Aufstellungs-Endpunkte
+        # für den ausgewählten Manager testen
+        st.markdown(
+            "#### Aufstellung je Spieltag"
+        )
+
+        test_day = played_days[0]["day"]
+
+        st.write(
+            f"Teste Endpunkte für "
+            f"**Spieltag {test_day}** und "
+            f"Manager **{escape(selected_manager_name)}**:"
+        )
+
+        base = (
+            f"/v4/leagues/{league_id}"
+            f"/managers/{selected_manager_id}"
+        )
+
+        user_base = (
+            f"/v4/leagues/{league_id}"
+            f"/users/{selected_manager_id}"
+        )
+
+        lineup_paths = [
+            f"{base}/lineup/{test_day}",
+            f"{base}/matchday/{test_day}",
+            f"{base}/matchday/{test_day}/lineup",
+            f"{base}/matchdays/{test_day}",
+            f"{base}/matchdays/{test_day}/lineup",
+            f"{base}/squad/{test_day}",
+            f"{base}/performance/{test_day}",
+            f"{base}/points/{test_day}",
+            f"{user_base}/lineup/{test_day}",
+            f"{user_base}/matchday/{test_day}",
+            (
+                f"/v4/leagues/{league_id}"
+                f"/matchday/{test_day}"
+                f"/managers/{selected_manager_id}"
+            ),
+            (
+                f"/v4/leagues/{league_id}"
+                f"/matchdays/{test_day}"
+                f"/managers/{selected_manager_id}"
+            ),
+            (
+                f"/v4/leagues/{league_id}"
+                f"/matchday/{test_day}"
+                f"/users/{selected_manager_id}"
+            ),
+            (
+                f"/v4/leagues/{league_id}"
+                f"/matchdays/{test_day}"
+                f"/lineup/{selected_manager_id}"
+            ),
+        ]
+
+        lineup_results = []
+
+        lineup_progress = st.progress(
+            0.0,
+            text="Aufstellungs-Endpunkte werden getestet …",
+        )
+
+        for index, path in enumerate(
+            lineup_paths
+        ):
+            result = try_endpoint(api, path)
+            lineup_results.append(result)
+
+            lineup_progress.progress(
+                (index + 1) / len(lineup_paths),
+                text=(
+                    f"Aufstellungs-Endpunkte werden "
+                    f"getestet … {index + 1} von "
+                    f"{len(lineup_paths)}"
+                ),
+            )
+
+        lineup_progress.empty()
+
+        successful_lineup = [
+            result
+            for result in lineup_results
+            if result["success"]
+        ]
+
+        failed_lineup = [
+            result
+            for result in lineup_results
+            if not result["success"]
+        ]
+
+        if successful_lineup:
+            st.success(
+                f"{len(successful_lineup)} "
+                f"Aufstellungs-Endpunkte haben "
+                f"Daten geliefert"
+            )
+
+            for result in successful_lineup:
+                st.markdown(
+                    "<div class='dev-endpoint-path'>"
+                    f"✅ {escape(result['path'])}"
+                    "</div>",
+                    unsafe_allow_html=True,
+                )
+
+                st.json(
+                    result["data"],
+                    expanded=True,
+                )
+
+        else:
+            st.warning(
+                "Keiner der getesteten "
+                "Aufstellungs-Endpunkte hat "
+                "Daten geliefert."
+            )
+
+        with st.expander(
+            f"{len(failed_lineup)} fehlgeschlagene "
+            f"Endpunkte anzeigen"
+        ):
+            for result in failed_lineup:
+                st.markdown(
+                    "<div class='dev-endpoint-path'>"
+                    f"❌ {escape(result['path'])} → "
+                    f"{escape(result['error'] or '')}"
+                    "</div>",
+                    unsafe_allow_html=True,
+                )
+
+        # Schritt 3: MVP-Endpunkte testen
+        st.markdown("#### MVP des Spieltags")
+
+        st.write(
+            f"Teste Endpunkte für "
+            f"**Spieltag {test_day}**:"
+        )
+
+        mvp_paths = [
+            (
+                f"/v4/leagues/{league_id}"
+                f"/matchday/{test_day}/mvp"
+            ),
+            (
+                f"/v4/leagues/{league_id}"
+                f"/matchdays/{test_day}/mvp"
+            ),
+            (
+                f"/v4/leagues/{league_id}"
+                f"/matchday/{test_day}"
+            ),
+            (
+                f"/v4/leagues/{league_id}"
+                f"/matchdays/{test_day}"
+            ),
+            (
+                f"/v4/competitions/1"
+                f"/matchday/{test_day}"
+            ),
+            (
+                f"/v4/competitions/1"
+                f"/matchdays/{test_day}"
+            ),
+            (
+                f"/v4/competitions/1"
+                f"/matchday/{test_day}/mvp"
+            ),
+            (
+                f"/v4/leagues/{league_id}"
+                f"/matchday/{test_day}/ranking"
+            ),
+            (
+                f"/v4/leagues/{league_id}"
+                f"/matchdays/{test_day}/ranking"
+            ),
+            (
+                f"/v4/leagues/{league_id}"
+                f"/matchday/{test_day}/results"
+            ),
+        ]
+
+        mvp_results = []
+
+        mvp_progress = st.progress(
+            0.0,
+            text="MVP-Endpunkte werden getestet …",
+        )
+
+        for index, path in enumerate(
+            mvp_paths
+        ):
+            result = try_endpoint(api, path)
+            mvp_results.append(result)
+
+            mvp_progress.progress(
+                (index + 1) / len(mvp_paths),
+                text=(
+                    f"MVP-Endpunkte werden getestet … "
+                    f"{index + 1} von {len(mvp_paths)}"
+                ),
+            )
+
+        mvp_progress.empty()
+
+        successful_mvp = [
+            result
+            for result in mvp_results
+            if result["success"]
+        ]
+
+        failed_mvp = [
+            result
+            for result in mvp_results
+            if not result["success"]
+        ]
+
+        if successful_mvp:
+            st.success(
+                f"{len(successful_mvp)} "
+                f"MVP-Endpunkte haben Daten geliefert"
+            )
+
+            for result in successful_mvp:
+                st.markdown(
+                    "<div class='dev-endpoint-path'>"
+                    f"✅ {escape(result['path'])}"
+                    "</div>",
+                    unsafe_allow_html=True,
+                )
+
+                # Nach MVP-Feldern suchen
+                mvp_hints = search_for_mvp(
+                    result["data"]
+                )
+
+                if mvp_hints:
+                    st.write(
+                        f"**{len(mvp_hints)} "
+                        f"MVP-Hinweise gefunden:**"
+                    )
+
+                    for hint in mvp_hints[:10]:
+                        st.write(
+                            f"Pfad: `{hint['path']}`"
+                        )
+
+                        st.json(hint["value"])
+
+                st.json(
+                    result["data"],
+                    expanded=False,
+                )
+
+        else:
+            st.warning(
+                "Keiner der getesteten "
+                "MVP-Endpunkte hat Daten geliefert."
+            )
+
+        with st.expander(
+            f"{len(failed_mvp)} fehlgeschlagene "
+            f"MVP-Endpunkte anzeigen"
+        ):
+            for result in failed_mvp:
+                st.markdown(
+                    "<div class='dev-endpoint-path'>"
+                    f"❌ {escape(result['path'])} → "
+                    f"{escape(result['error'] or '')}"
+                    "</div>",
+                    unsafe_allow_html=True,
+                )
+
+
+# ---------------------------------------------------------
 # Transferhistorie
 # ---------------------------------------------------------
 
