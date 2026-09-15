@@ -2319,7 +2319,7 @@ else:
         - stats["squad_value"]
     )
 
-return {
+    return {
         "plain": calculated,
         "real": real_balance,
         "bonus": real_balance - calculated,
