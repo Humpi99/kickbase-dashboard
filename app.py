@@ -4398,7 +4398,7 @@ with st.expander(
             (
                 "Bonus gesamt",
                 format_signed_currency(
-                    manager_bonus
+                    manager_bonus + bonus_extra
                 ),
                 [
                     (
@@ -4436,15 +4436,17 @@ with st.expander(
                         - manager_calculated_bonus
                     )
                     if viewing_self
-                    else "—"
+                    else format_signed_currency(
+                        bonus_extra
+                    )
                 ),
                 [
                     (
                         "MVP, Transfers und "
                         "sonstige Boni"
                         if viewing_self
-                        else "Nur beim eigenen "
-                        "Manager sichtbar"
+                        else "Bonus-Zuschlag aus "
+                        "der Sidebar"
                     ),
                 ],
                 (
@@ -4453,13 +4455,8 @@ with st.expander(
                         - manager_calculated_bonus
                     )
                     if viewing_self
-                    else "neutral"
+                    else tone_of(bonus_extra)
                 ),
-            ),
-        ],
-        compact,
-    )
-
     
     kpi_block(
         "Gewinn",
