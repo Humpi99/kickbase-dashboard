@@ -4429,6 +4429,7 @@ with st.expander(
                 ),
             ),
             (
+            (
                 "Nicht erfasst",
                 (
                     format_signed_currency(
@@ -4439,6 +4440,23 @@ with st.expander(
                     else format_signed_currency(
                         bonus_extra
                     )
+                ),
+                [
+                    (
+                        "MVP, Transfers und "
+                        "sonstige Boni"
+                        if viewing_self
+                        else "Bonus-Zuschlag aus "
+                        "der Sidebar"
+                    ),
+                ],
+                (
+                    tone_of(
+                        manager_bonus
+                        - manager_calculated_bonus
+                    )
+                    if viewing_self
+                    else tone_of(bonus_extra)
                 ),
                 [
                     (
