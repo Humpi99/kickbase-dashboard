@@ -4389,11 +4389,7 @@ with st.expander(
     )
 
     kpi_block(
-        (
-            "Bonus"
-            if viewing_self
-            else "Bonus geschätzt"
-        ),
+        "Bonus" if viewing_self else "Bonus geschätzt",
         [
             (
                 "Bonus gesamt",
@@ -4401,16 +4397,14 @@ with st.expander(
                     manager_bonus + bonus_extra
                 ),
                 [
-                    (
-                        "Echte Differenz aus Budget"
-                        if viewing_self
-                        else (
-                            "Geschätzt: Pauschale + Login "
-                            "+ Punkte + Schwellen + Siege"
-                        )
+                    "Echte Differenz aus Budget"
+                    if viewing_self
+                    else (
+                        "Geschätzt: Pauschale + Login "
+                        "+ Punkte + Schwellen + Siege"
                     ),
                 ],
-                tone_of(manager_bonus),
+                tone_of(manager_bonus + bonus_extra),
             ),
             (
                 "Berechnet",
@@ -4419,61 +4413,31 @@ with st.expander(
                 ),
                 [
                     "2,5M + Login + Punkte×1k",
-                    (
-                        "Team-Schwellen + "
-                        "Spieltagssieger"
-                    ),
+                    "Team-Schwellen + Spieltagssieger",
                 ],
-                tone_of(
-                    manager_calculated_bonus
-                ),
+                tone_of(manager_calculated_bonus),
             ),
             (
                 "Nicht erfasst",
-                (
-                    format_signed_currency(
-                        manager_bonus
-                        - manager_calculated_bonus
-                    )
-                    if viewing_self
-                    else format_signed_currency(
-                        bonus_extra
-                    )
-                ),
+                format_signed_currency(
+                    manager_bonus - manager_calculated_bonus
+                )
+                if viewing_self
+                else format_signed_currency(bonus_extra),
                 [
-                    (
-                        "MVP, Transfers und "
-                        "sonstige Boni"
-                        if viewing_self
-                        else "Bonus-Zuschlag aus "
-                        "der Sidebar"
-                    ),
-                ],
-                (
-                    tone_of(
-                        manager_bonus
-                        - manager_calculated_bonus
-                    )
+                    "MVP, Transfers und sonstige Boni"
                     if viewing_self
-                    else tone_of(bonus_extra)
-                ),
-                [
-                    (
-                        "MVP, Transfers und "
-                        "sonstige Boni"
-                        if viewing_self
-                        else "Bonus-Zuschlag aus "
-                        "der Sidebar"
-                    ),
+                    else "Bonus-Zuschlag aus der Sidebar",
                 ],
-                (
-                    tone_of(
-                        manager_bonus
-                        - manager_calculated_bonus
-                    )
-                    if viewing_self
-                    else tone_of(bonus_extra)
-                ),
+                tone_of(
+                    manager_bonus - manager_calculated_bonus
+                )
+                if viewing_self
+                else tone_of(bonus_extra),
+            ),
+        ],
+        compact,
+    )
     
     kpi_block(
         "Gewinn",
