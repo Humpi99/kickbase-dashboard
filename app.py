@@ -4429,7 +4429,6 @@ with st.expander(
                 ),
             ),
             (
-            (
                 "Nicht erfasst",
                 (
                     format_signed_currency(
